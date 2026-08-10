@@ -28,3 +28,5 @@
 
 This repository is a replica of our Capstone2026-Applicant-Trajectory repo, which is kept private due to the sensitive nature of the data we utilized.
 We've created this repository in order for all other aspects of our project to be reproducible, including EDA and modeling code. 
+
+Reach out to `sramchandani@willamette.edu` and `cjstonge@willamette.edu` with questions or concerns.
