@@ -1,0 +1,1244 @@
+---
+title: "Predicting Enrollment Destination Group with XGBoost on Original Processed Dataset"
+date: 7/28
+author: "Courtney St. Onge & Seira Ramchandani"
+format: html
+jupyter: python3
+---
+**Data**: `capstone_data_xgboost.csv` (6443 rows, 35 columns)
+**Changes made from processed dataset**: 
+- The xgboost dataset keeps NAs as is without imputing, since XGBoost handles NaN natively. 
+- Columns for duration from datetimes were created.
+- Transfer student rows were dropped, since most of their data is incomplete, and we didn't use those rows for the baseline MLR or SVM.
+
+# Version 1
+
+## Imports
+
+```{python}
+#import libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, StratifiedGroupKFold, StratifiedKFold, cross_val_score
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, balanced_accuracy_score, f1_score, roc_auc_score, ConfusionMatrixDisplay
+from sklearn.feature_selection import SelectFromModel
+from sklearn.preprocessing import StandardScaler
+from sklearn.inspection import permutation_importance
+import shap
+import xgboost as xgb
+import optuna
+```
+
+## Reading in Data
+
+```{python}
+# Importing the data
+df = pd.read_csv("../../data/processed/capstone_data_xgboost.csv")
+df["admission_plan"] = df["admission_plan"].astype("category")
+#df["active_region"] = df["active_region"].astype("category")
+#df["active_country"] = df["active_country"].astype("category")
+df["sex"] = df["sex"].astype("category")
+df["person_citizenship_status"] = df["person_citizenship_status"].astype("category")
+df["ipeds_classification"] = df["ipeds_classification"].astype("category")
+df["n_region"] = df["n_region"].astype("category")
+```
+
+```{python}
+# 1. Load your dataset
+df2 = df
+#print(df['destination'].unique)
+status_map = {
+    'Other': 0, 
+    'NW5': 1, 
+    'Local Private': 2,
+    'Three Large Public': 3, 
+    'Local Large Public': 4 
+    }
+df2['dest_n'] = df2['destination'].map(status_map)
+
+# 2. Separate into features (X) and target (y)
+X = df2.drop(columns=["destination", "dest_n"])  # Everything except the target
+y = df2["dest_n"]                 # Only the target column
+
+```
+
+```{python}
+# 3. Split into training and testing sets (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(
+   X, y, test_size=0.2, random_state=42, stratify=y
+)
+```
+
+## Base Model
+
+```{python}
+print(df2["dest_n"].value_counts())
+```
+
+**Class Balance**
+- NW5: 427 
+- Local Private: 1432
+- Three Large Public: 693
+- Local Large Public: 889
+- Other: 3002
+
+```{python}
+#setting to defaults from xgboost documentation
+xgb_official = xgb.XGBClassifier(
+    objective= 'multi:softprob',
+    n_estimators=100,
+    learning_rate = 0.3,
+    gamma=0,
+    max_depth=6,
+    min_child_weight=1,
+    max_delta_step=1,
+    subsample=1,
+    reg_lambda=1,
+    alpha=0,
+    random_state=42,
+    eval_metric='mlogloss', 
+    enable_categorical = True
+)
+xgb_official.fit(X_train, y_train)
+y_pred = xgb_official.predict(X_test)
+official_acc = accuracy_score(y_test,y_pred )
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(classification_report(y_test, y_pred))
+print(f"\n{'='*50}")
+```
+
+```{python}
+#setting to defaults from xgboost documentation
+xgb_official = xgb.XGBClassifier(
+    objective= 'multi:softprob',
+    random_state=42,
+    eval_metric='mlogloss', 
+    enable_categorical = True
+)
+xgb_official.fit(X_train, y_train)
+y_pred = xgb_official.predict(X_test)
+official_acc = accuracy_score(y_test,y_pred )
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(classification_report(y_test, y_pred))
+print(f"\n{'='*50}")
+```
+
+50.66 test acc
+
+## Tuning
+
+### Optuna without Pruning
+
+```{python}
+
+# this example from class
+def objective(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'objective': 'multi:softprob',
+        'n_estimators': trial.suggest_int('n_estimators', 60, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.2, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 1, 10
+        ),
+        'gamma': trial.suggest_float('gamma', 0, 5),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, 1.0
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 10, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 10, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'mlogloss'
+    }
+    
+    model = xgb.XGBClassifier(**params,
+    enable_categorical = True)
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(objective, n_trials=10, show_progress_bar=True)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='mlogloss',
+    enable_categorical=True
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+
+Resulting Parameters ( with direction set to max since it is returning the accuracy score)
+
+n_estimators: 479
+  max_depth: 3
+  learning_rate: 0.012571550026395564
+  min_child_weight: 9
+  gamma: 1.8510526313818647
+  subsample: 0.5694210435534719
+  colsample_bytree: 0.5929535174973273
+  reg_alpha: 1.4024750512129652e-06
+  reg_lambda: 0.06905801348656956
+
+  Best CV Accuracy: 0.5320
+  Test Accuracy: 0.5229
+
+
+
+### Optuna with Pruning
+
+
+dtrain = xgb.DMatrix(X_train, label=y_train)
+dval = xgb.DMatrix(X_val, label=y_val)
+
+
+def objective(trial):
+
+   Use Optuna's pruning callback for XGBoost
+  pruning_callback = optuna.integration.XGBoostPruningCallback(
+      trial, 'validation-mlogloss'
+  )
+
+  history = xgb.train(
+      params,
+      dtrain,
+      num_boost_round=100,
+      evals=[(dval, 'validation')],
+      callbacks=[pruning_callback],
+  )
+
+   Evaluate final mlogloss
+  preds = history.predict(dval)
+  return history.eval(dval)  # or return final mlogloss value
+
+
+study = optuna.create_study(
+    direction='minimize', pruner=optuna.pruners.MedianPruner()
+)
+study.optimize(objective, n_trials=20)
+
+```{python}
+
+
+def objective(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'objective': 'multi:softprob',
+        'n_estimators': trial.suggest_int('n_estimators', 60, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.2, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 1, 10
+        ),
+        'gamma': trial.suggest_float('gamma', 0, 5),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, 1.0
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 10, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 10, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'mlogloss'
+    }
+    
+    pruning_callback = optuna.integration.XGBoostPruningCallback(
+      trial, 'validation_0-mlogloss'
+      )
+
+    model = xgb.XGBClassifier(**params,
+    enable_categorical = True,
+    callbacks=[pruning_callback])
+
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize', pruner=optuna.pruners.MedianPruner(n_warmup_steps=10) )
+study.optimize(objective, n_trials=10, show_progress_bar=False)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='mlogloss',
+    enable_categorical=True
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+## Additional Approach
+
+### other group
+Stratified K folds still needs to be fixed
+
+```{python}
+RANDOM_STATE = 42
+CLASSES = ["Other", "NW5", "Local Private", "Three Large Public", "Local Large Public"]
+outer = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE) # first fold is test set
+train_val_idx, test_idx = next(outer.split(X, y)) # groupby client_id to avoid data leakage between train/val and test sets
+
+inner = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE) # inner fold is for train/val split
+inner_train_pos, inner_val_pos = next(
+    inner.split(X.iloc[train_val_idx], y[train_val_idx])
+)
+train_idx = train_val_idx[inner_train_pos]
+val_idx = train_val_idx[inner_val_pos]
+
+# Split the data into train, validation, and test sets, and check for client overlap between train/val and test sets
+X_train, y_train = X.iloc[train_idx], y[train_idx]
+X_val, y_val = X.iloc[val_idx], y[val_idx]
+X_test, y_test = X.iloc[test_idx], y[test_idx]
+
+#assert not (set(groups[train_idx]) | set(groups[val_idx])) & #set(groups[test_idx]), \
+#    "client overlap between train/val and test"
+
+for name, yy in [("train", y_train), ("val", y_val), ("test", y_test)]:
+    dist = pd.Series(yy).value_counts(normalize=True).sort_index().round(3)
+    mix = {CLASSES[k]: v for k, v in dist.items()}
+    print(f"{name:5s} n={len(yy):4d}  class mix={mix}")
+```
+
+Training multiclass model
+
+
+```{python}
+# Compute class-balanced sample weights for the training set to address class imbalance during model training
+def balanced_weights(labels: np.ndarray) -> np.ndarray:
+    counts = np.bincount(labels, minlength=len(CLASSES)).astype(float) # count how many samples belong to each class
+    per_class = len(labels) / (len(CLASSES) * np.where(counts == 0, 1, counts)) # compute weights for each class
+    return per_class[labels]
+
+PARAMS = dict(
+    objective="multi:softprob", # use softprob for multi-class classification
+    num_class=len(CLASSES),
+    tree_method="hist", # use histogram-based algorithm for faster training
+    enable_categorical=True,
+    max_cat_to_onehot=1, # treat all categorical features as categorical (not one-hot encoded)
+    n_estimators=2000, # number of boosting rounds
+    learning_rate=0.05, # step size shrinkage
+    max_depth=4, # maximum depth of a tree
+    min_child_weight=5, # minimum sum of instance weight needed in a child
+    subsample=0.8, # fraction of samples used for training each tree
+    colsample_bytree=0.8, # fraction of features used for training each tree
+    reg_lambda=2.0, # L2 regularization term on weights
+    reg_alpha=0.0, # L1 regularization term on weights
+    eval_metric="mlogloss", # evaluation metric for multi-class classification
+    early_stopping_rounds=100, # stop training if no improvement after 100 rounds
+    random_state=RANDOM_STATE, # seed for reproducibility
+    n_jobs=-1, # use all available cores
+)
+
+clf = xgb.XGBClassifier(**PARAMS)
+clf.fit(
+    X_train,
+    y_train,
+    sample_weight=balanced_weights(y_train),
+    eval_set=[(X_train, y_train), (X_val, y_val)],
+    verbose=100,
+)
+
+print("\nbest iteration:", clf.best_iteration, "| best val mlogloss:", round(clf.best_score, 4))
+```
+
+
+### Internet k-Fold
+
+
+```{python}
+model = xgb.XGBClassifier(
+    objective = 'multi:softprob',
+    n_estimators=100, learning_rate=0.1, random_state=42, enable_categorical = True,
+    eval_metric ='mlogloss')
+
+# Create a StratifiedKFold object
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# Perform stratified k-fold cross-validation
+cv_scores = cross_val_score(model, X, y, cv=cv, scoring='accuracy')
+
+# Print the cross-validation scores
+print("Cross-validation scores:", cv_scores)
+print(f"Mean cross-validation score: {np.mean(cv_scores):.2f} +/- {np.std(cv_scores):.2f}")
+```
+
+
+```{python}
+from sklearn.model_selection import StratifiedKFold
+from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score
+import numpy as np
+
+# Assume X and y are your features and labels
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+model = XGBClassifier(tree_method="hist")
+
+fold_scores = []
+
+for train_idx, val_idx in skf.split(X, y):
+    X_train, X_val = X[train_idx], X[val_idx]
+    y_train, y_val = y[train_idx], y[val_idx]
+    
+    model.fit(X_train, y_train)
+    preds = model.predict(X_val)
+    
+    score = accuracy_score(y_val, preds)
+    fold_scores.append(score)
+
+print("Mean Accuracy:", np.mean(fold_scores))
+
+```
+
+## SHAP - Feature Importance
+
+Params to use for model:
+
+n_estimators: 479
+  max_depth: 3
+  learning_rate: 0.012571550026395564
+  min_child_weight: 9
+  gamma: 1.8510526313818647
+  subsample: 0.5694210435534719
+  colsample_bytree: 0.5929535174973273
+  reg_alpha: 1.4024750512129652e-06
+  reg_lambda: 0.06905801348656956
+
+
+```{python}
+xgb_model = xgb.XGBClassifier(
+    objective= 'multi:softprob',
+    n_estimators=479,
+    learning_rate = 0.1257,
+    gamma=1.85105,
+    max_depth=3,
+    min_child_weight=9,
+    subsample=.56942,
+    colsample_bytree= 0.59295,
+    reg_lambda=.069058,
+    alpha=1.402475,
+    random_state=42,
+    eval_metric='mlogloss', 
+    enable_categorical = True
+)
+xgb_model.fit(X_train, y_train)
+```
+
+
+```{python}
+explainer = shap.TreeExplainer(xgb_model)
+
+# Calculate SHAP values for the test set
+shap_values = explainer.shap_values(X_test)
+
+# Visualize global feature importances
+shap.summary_plot(shap_values, X_test, plot_type="bar")
+```
+
+According to the visual, the most important features are active_region, n_region (grouped region), days_visit_to_submit_in_person, app_weighted_gpa.
+
+However, this is also sorted according to classes, which we might want to separate out, since stacked bar graphs are very hard to comprehend.
+
+
+```{python}
+# Source - https://stackoverflow.com/q/78396068
+# Posted by cconsta1
+# Retrieved 2026-07-30, License - CC BY-SA 4.0
+#this is for class 0, which should be other
+shap.summary_plot(shap_values[:,:,0], X_test, plot_type="bar")
+#print(shap_values[:,:,0].class_name)
+```
+
+Other - Active_region, n_region (appears to be CA, OR, WA, secondary, or other), satr_superscore, days_visit_to_submit_in_person
+
+```{python}
+#this is for class 1, nw5
+shap.summary_plot(shap_values[:,:,1], X_test, plot_type="bar")
+```
+
+Days visit to submit in person, active_region, app_weighted_gpa, satr superscore
+
+```{python}
+#this is for class 2, local private
+shap.summary_plot(shap_values[:,:,2], X_test, plot_type="bar")
+```
+active_region, Days visit to submit in person, then a ways down - days to submit, sex
+
+
+```{python}
+#this is for class 3, 3 large public
+shap.summary_plot(shap_values[:,:,3], X_test, plot_type="bar")
+```
+active_region, n_region, student_athlete, satr superscore
+
+
+```{python}
+#this is for class 4, local large public
+shap.summary_plot(shap_values[:,:,4], X_test, plot_type="bar")
+```
+BY FAR MOST IMPORTANT - active_region, n_region. then like wayyy down: days visit to submit in person, app_weighted_gpa
+
+#### Dependence Plot
+
+```{python}
+shap.dependence_plot(0,shap_values[0],X.values, feature_names = X.columns)
+```
+
+```{python}
+shap.dependence_plot("dest_n", shap_values, X_test)
+```
+
+```{python}
+shap.plots.scatter(shap_values[:, "dest_n"])
+```
+
+```{python}
+#explainer = shap.Explainer(xgb_model, X)
+
+#explanation = explainer(X[:1000])
+
+explainer = shap.TreeExplainer(xgb_model)
+explanation = explainer(X[:1000])
+# Calculate SHAP values for the test set
+#shap_values = explainer.shap_values(X_test)
+```
+
+```{python}
+shap.plots.scatter(shap_values[:, shap_values.abs.mean(0).argsort[-1]])
+```
+
+```{python}
+shap.plots.scatter(explanation[:, explanation.abs.mean(0).argsort()[-1]])
+```
+
+```{python}
+top_feature_idx = explanation.abs.mean(0).argsort[-1]()
+
+# Pass the single feature column slice using the integer index
+shap.plots.scatter(explanation[:, top_feature_idx])
+```
+
+### Classification Report
+
+
+```{python}
+y_pred = xgb_model.predict(X_test)
+print(classification_report(y_test, y_pred))
+```
+
+We can see that 
+
+# Version 2
+
+## Baseline
+
+### Reading in Data
+```{python}
+#imports
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, StratifiedGroupKFold, StratifiedKFold, cross_val_score
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, balanced_accuracy_score, f1_score, roc_auc_score,ConfusionMatrixDisplay
+from sklearn.feature_selection import SelectFromModel
+from sklearn.preprocessing import StandardScaler
+from sklearn.inspection import permutation_importance
+import shap
+import xgboost as xgb
+import optuna
+```
+
+```{python}
+# Importing the data
+df = pd.read_csv("../../data/processed/capstone_data_xgboost_v2.csv")
+df["admission_plan"] = df["admission_plan"].astype("category")
+df["sex"] = df["sex"].astype("category")
+df["person_citizenship_status"] = df["person_citizenship_status"].astype("category")
+df["ipeds_classification"] = df["ipeds_classification"].astype("category")
+df["n_region"] = df["n_region"].astype("category")
+df['person_fafsa_submit_date'] = df['person_fafsa_submit_date'].notna().astype(int)
+```
+
+```{python}
+# 1. Load your dataset
+df2 = df
+#print(df['destination'].unique)
+status_map = { 
+    'NW5': 0, 
+    'Local Private': 1,
+    'Three Large Public': 2, 
+    'Local Public': 3
+    }
+df2['dest_n'] = df2['destination'].map(status_map)
+
+# 2. Separate into features (X) and target (y)
+X = df2.drop(columns=["destination", "dest_n"])  # Everything except the target
+y = df2["dest_n"]                 # Only the target column
+
+```
+
+```{python}
+# 3. Split into training and testing sets (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(
+   X, y, test_size=0.2, random_state=42, stratify=y
+)
+```
+
+### Base Model
+
+```{python}
+print(df2["dest_n"].value_counts())
+```
+
+**Class Balance**
+- NW5: 427 
+- Local Private: 868
+- Three Large Public: 693
+- Local Public: 519
+
+
+```{python}
+#setting to defaults from xgboost documentation
+xgb_official = xgb.XGBClassifier(
+    objective= 'multi:softprob',
+    n_estimators=100,
+    learning_rate = 0.3,
+    gamma=0,
+    max_depth=6,
+    min_child_weight=1,
+    max_delta_step=1,
+    subsample=1,
+    reg_lambda=1,
+    alpha=0,
+    random_state=42,
+    eval_metric='mlogloss', 
+    enable_categorical = True
+)
+xgb_official.fit(X_train, y_train)
+y_pred = xgb_official.predict(X_test)
+official_acc = accuracy_score(y_test,y_pred )
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(classification_report(y_test, y_pred))
+print(f"\n{'='*50}")
+```
+
+Overall accuracy: 41.8%
+Decent precision and recall for NW5 though
+
+
+```{python}
+#setting to defaults from xgboost documentation
+xgb_official = xgb.XGBClassifier(
+    objective= 'multi:softprob',
+    random_state=42,
+    eval_metric='mlogloss', 
+    enable_categorical = True
+)
+xgb_official.fit(X_train, y_train)
+y_pred = xgb_official.predict(X_test)
+official_acc = accuracy_score(y_test,y_pred )
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(classification_report(y_test, y_pred))
+print(f"\n{'='*50}")
+```
+
+Overall accuracy 41.24%
+
+
+## Tuning
+
+### Optuna
+
+```{python}
+
+# this example from class
+def objective(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'objective': 'multi:softprob',
+        'n_estimators': trial.suggest_int('n_estimators', 60, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.2, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 1, 10
+        ),
+        'gamma': trial.suggest_float('gamma', 0, 5),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, 1.0
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 10, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 10, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'mlogloss'
+    }
+    
+    model = xgb.XGBClassifier(**params,
+    enable_categorical = True)
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(objective, n_trials=100, show_progress_bar=True)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='mlogloss',
+    enable_categorical=True
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+This is going to require much more tuning in order to actually improve the model. 
+Next, I would use pruning and/or early stopping with Optuna to try and get more specific parameters.
+
+Best Parameters:
+n_estimators: 829
+  max_depth: 3
+  learning_rate: 0.08117351136499237
+  min_child_weight: 5
+  gamma: 3.2882064952954404
+  subsample: 0.6082729287501553
+  colsample_bytree: 0.5135162040270926
+  reg_alpha: 2.1636013269554364
+  reg_lambda: 2.058865325027583
+
+  Best CV Accuracy: 0.4618
+  Test Accuracy: 0.4243
+
+#### Optuna Round 2
+
+```{python}
+
+# this example from class
+def objective_r2(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'objective': 'multi:softprob',
+        'n_estimators': trial.suggest_int('n_estimators', 400, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 8),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.2, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 2, 8
+        ),
+        'gamma': trial.suggest_float('gamma', 1, 4),
+        'subsample': trial.suggest_float('subsample', 0.52, .95),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, .8
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 6, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 6, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'mlogloss'
+    }
+    
+    model = xgb.XGBClassifier(**params,
+    enable_categorical = True)
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+    #return cv_results['test-accuracy-mean'].max()
+    
+    #return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(objective_r2, n_trials=100, show_progress_bar=True)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='mlogloss',
+    enable_categorical=True
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+ n_estimators: 723
+  max_depth: 3
+  learning_rate: 0.09471917016183334
+  min_child_weight: 8
+  gamma: 3.6284448785332244
+  subsample: 0.6668185786416002
+  colsample_bytree: 0.4676419711917412
+  reg_alpha: 1.6896791158275375
+  reg_lambda: 2.1665151078873985
+
+  Best CV Accuracy: 0.4628
+  Test Accuracy: 0.4263
+
+#### Optuna Round 3
+
+```{python}
+
+# this example from class
+def objective_r3(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'objective': 'multi:softprob',
+        'n_estimators': trial.suggest_int('n_estimators', 600, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 8),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.2, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 4, 9
+        ),
+        'gamma': trial.suggest_float('gamma', 2, 5),
+        'subsample': trial.suggest_float('subsample', 0.52, .95),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, .7
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 5, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 5, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'mlogloss'
+    }
+    
+    model = xgb.XGBClassifier(**params,
+    enable_categorical = True)
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+    #return cv_results['test-accuracy-mean'].max()
+    
+    #return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(objective_r3, n_trials=100, show_progress_bar=True)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='mlogloss',
+    enable_categorical=True
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+Best Parameters from Round 3:
+
+n_estimators: 690
+  max_depth: 3
+  learning_rate: 0.10935595060072047
+  min_child_weight: 9
+  gamma: 4.239706468456177
+  subsample: 0.8356437093259751
+  colsample_bytree: 0.3947796108547502
+  reg_alpha: 4.343955353896956e-08
+  reg_lambda: 1.2631845997045592e-06
+
+  Best CV Accuracy: 0.4628
+  Test Accuracy: 0.4283
+
+Round 3 resulted in a slightly better test accuracy than round 2, leading me to want to use this one instead
+
+
+
+### Optuna with Pruning
+
+
+## Feature Importance 
+Params to use for model (from optuna R1 without pruning):
+Will maybe try again with round 3 parameterss
+
+
+n_estimators: 829
+  max_depth: 3
+  learning_rate: 0.08117351136499237
+  min_child_weight: 5
+  gamma: 3.2882064952954404
+  subsample: 0.6082729287501553
+  colsample_bytree: 0.5135162040270926
+  reg_alpha: 2.1636013269554364
+  reg_lambda: 2.058865325027583
+
+Using Round 3 params:
+
+n_estimators: 690
+  max_depth: 3
+  learning_rate: 0.10935595060072047
+  min_child_weight: 9
+  gamma: 4.239706468456177
+  subsample: 0.8356437093259751
+  colsample_bytree: 0.3947796108547502
+  reg_alpha: 4.343955353896956e-08
+  reg_lambda: 1.2631845997045592e-06
+
+  Best CV Accuracy: 0.4628
+  Test Accuracy: 0.4283
+
+
+```{python}
+# FINAL MODEL 
+
+
+xgb_model = xgb.XGBClassifier(
+    objective= 'multi:softprob',
+    n_estimators = 690,
+    learning_rate = 0.10935595060072047,
+    gamma=4.239706468456177,
+    max_depth=3,
+    min_child_weight=9,
+    subsample=0.8356437093259751,
+    colsample_bytree= 0.3947796108547502,
+    reg_lambda=1.2631845997045592e-06,
+    alpha=4.343955353896956e-08,
+    random_state=42,
+    eval_metric='mlogloss', 
+    enable_categorical = True
+)
+xgb_model.fit(X_train, y_train)
+```
+
+### SHAP 
+
+Reminder of Classes:
+    'NW5' : 0,
+    'Local Private': 1,
+    'Three Large Public': 2, 
+    'Local Public': 3
+
+```{python}
+background_data = X_train.sample(n=80, random_state=42)
+background_data = background_data.apply(pd.to_numeric, errors='coerce').fillna(0)
+```
+
+explainer = shap.TreeExplainer(xgb_model, data=background_data)
+```{python}
+
+explainer = shap.TreeExplainer(xgb_model)
+
+```
+
+```{python}
+# Calculate SHAP values for the test set
+shap_values = explainer.shap_values(X_test)
+exp_obj = explainer(X_test)
+# Visualize global feature importances
+shap.summary_plot(shap_values, X_test, plot_type="bar")
+```
+
+According to the visual, the most important features are n_region (grouped region), student athlete, and days_to_submit.
+
+However, this is also sorted according to classes, which we might want to separate out, since stacked bar graphs are very hard to comprehend.
+
+
+```{python}
+# Source - https://stackoverflow.com/q/78396068
+# Posted by cconsta1
+# Retrieved 2026-07-30, License - CC BY-SA 4.0
+#this is for class 0, NW5
+shap.summary_plot(shap_values[:,:,0], X_test, plot_type="bar")
+#print(shap_values[:,:,0].class_name)
+```
+
+NW5 - n_region, satr_superscore, days_to_submit, first_gen_status
+
+```{python}
+#this is for class 1, Local Private
+shap.summary_plot(shap_values[:,:,1], X_test, plot_type="bar")
+```
+
+n_region, student_athlete, app_weighted_gpa, curriculum rating
+
+```{python}
+#this is for class 2, 3 large public
+shap.summary_plot(shap_values[:,:,2], X_test, plot_type="bar")
+```
+n_region, student_athlete, efc_sai, first_gen kind of close to efc/sai
+
+
+```{python}
+#this is for class 3, local public
+shap.summary_plot(shap_values[:,:,3], X_test, plot_type="bar")
+```
+n_region, extremely far down- days to submit, admission plan
+
+
+#### Dependence Plot
+
+```{python}
+shap.dependence_plot(0,shap_values[0],X.values, feature_names = X.columns)
+```
+
+```{python}
+shap.dependence_plot("dest_n", shap_values, X_test)
+```
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import shap
+
+def plot_shap_categorical(
+  shap_values: shap.Explanation, 
+  x: pd.DataFrame, 
+  feature_name: str,
+  dest: int,
+  dcat: str
+ ) -> plt.Axes:
+ 
+    # Extract SHAP values and feature values
+    feature_idx = x.columns.tolist().index(feature_name)
+    feature_values = x.iloc[:, feature_idx]
+    shap_values_feature = (((pd.DataFrame(shap_values.shap_values(x)[:, feature_idx][:,dest])).values).astype(float)).flatten()
+
+    # Map categories to numeric values for plotting
+    categories = feature_values.unique()
+    category_to_num = {cat: num for num, cat in enumerate(categories)}
+    feature_values_numeric = feature_values.map(category_to_num)
+
+    # Create scatter plot with categories on x-axis
+    _, ax = plt.subplots(figsize=(10, 6))
+    ax.scatter(
+        feature_values_numeric,
+        shap_values_feature,
+        alpha=0.7,
+        s=120,
+    )
+
+    # Replace numeric x-ticks with category labels
+    ax.set_xticks(
+      ticks=np.arange(len(categories)), labels=categories, rotation=45, fontsize=12
+    )
+
+    # Reference line at y=0
+    ax.axhline(y=0, color="gray", linestyle="--")
+
+    # Labels and title
+    ax.grid(True)
+    ax.set_xlabel(f"Categorical Feature: {feature_name}")
+    ax.set_ylabel("SHAP Value")
+    ax.set_title(f"SHAP Dependence Plot for Categorical Feature '{feature_name}'\nDestination Category: {dcat}")
+    
+
+    plt.tight_layout()
+    return ax
+```
+
+```{python}
+ax = plot_shap_categorical(explainer, X_test, "n_region", 0, "NW5")
+```
+
+```{python}
+ax = plot_shap_categorical(explainer, X_test, "n_region", 1, "Local Private")
+```
+
+```{python}
+ax = plot_shap_categorical(explainer, X_test, "n_region", 2, "Three Large Public")
+```
+
+```{python}
+ax = plot_shap_categorical(explainer, X_test, "n_region", 3, "Local Public")
+```
+
+```{python}
+ax = plot_shap_categorical(explainer, X_test, "admission_plan", 3, "Local Public")
+```
+
+#### Beeswarm Plots
+
+These work for numeric features (categorical are on graph, but are not colored according to their value)
+
+```{python}
+import matplotlib.pyplot as plt
+
+shap_valuess = explainer(X_test)
+dest = 0
+dcat = "NW5"
+ax = plt.subplot()
+ax.grid(True)
+ax = shap.plots.beeswarm(shap_valuess[:, :, dest], max_display=10, show=False, log_scale=False)
+ax.set_title(f"Global SHAP Values for {dcat}")
+plt.tight_layout()
+```
+
+```{python}
+import matplotlib.pyplot as plt
+
+shap_valuess = explainer(X_test)
+dest = 1
+dcat = "Local Private"
+ax = plt.subplot()
+ax.grid(True)
+ax = shap.plots.beeswarm(shap_valuess[:, :, dest], max_display=10, show=False, log_scale=False)
+ax.set_title(f"Global SHAP Values for {dcat}")
+plt.tight_layout()
+```
+
+```{python}
+import matplotlib.pyplot as plt
+
+shap_valuess = explainer(X_test)
+dest = 2
+dcat = "Three Large Public"
+ax = plt.subplot()
+ax.grid(True)
+ax = shap.plots.beeswarm(shap_valuess[:, :, dest], max_display=10, show=False, log_scale=False)
+ax.set_title(f"Global SHAP Values for {dcat}")
+plt.tight_layout()
+```
+
+```{python}
+import matplotlib.pyplot as plt
+
+shap_valuess = explainer(X_test)
+dest = 3
+dcat = "Local Public"
+ax = plt.subplot()
+ax.grid(True)
+ax = shap.plots.beeswarm(shap_valuess[:, :, dest], max_display=10, show=False, log_scale=False)
+ax.set_title(f"Global SHAP Values for {dcat}")
+plt.tight_layout()
+```
+
+
+### Shap interaction values
+
+Currently not working because of categorical variables
+
+```{python}
+background_data = X_train.sample(n=80, random_state=42)
+background_data = background_data.apply(pd.to_numeric, errors='coerce').fillna(0)
+```
+
+```{python}
+explainer = shap.TreeExplainer(xgb_model, data=background_data)
+```
+
+
+```{python}
+interaction_values = explainer.shap_interaction_values(X_test)
+class_index = 0
+class_interactions = interaction_values[:, :, :, class_index]
+```
+
+
+### Classification Report
+
+
+```{python}
+y_pred = xgb_model.predict(X_test)
+
+```
+
+```{python}
+print(classification_report(y_test, y_pred))
+print(confusion_matrix(y_test, y_pred))
+```
+
+```{python}
+
+class_names = ['NW5', 'Local Private', 'Three Large Public', 'Local Public']
+
+# 1. Compute matrix
+cm = confusion_matrix(y_test, y_pred, normalize='true')
+
+# 2. Convert to a Pandas DataFrame for automatic axis labeling
+df_cm = pd.DataFrame(cm, index=class_names, columns=class_names)
+
+# 3. Plot via Seaborn
+plt.figure(figsize=(6, 4))
+sns.heatmap(
+    df_cm, 
+    annot=True,             # Show numbers inside the squares
+    #fmt='d',                # Format numbers as integers
+    cmap='Greens',          # Color palette ('Blues', 'YlGnBu', 'Purples')
+    cbar=True,              # Show the color side-bar
+    square=True,            # Make cells perfectly square
+    annot_kws={"size": 14}  # Font size of the numbers inside cells
+)
+
+# 4. Add clean labeling
+plt.title('Pretty Confusion Matrix (Seaborn)', fontsize=16, pad=20)
+plt.xlabel('Predicted Label', fontsize=12, labelpad=10)
+plt.ylabel('True Label', fontsize=12, labelpad=10)
+plt.tight_layout()
+plt.show()
+
+```

@@ -1,0 +1,342 @@
+---
+title: "EDA Version 2 with new groupings"
+author: "Seira Ramchandani & Courtney St. Onge"
+date: "2026-08-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/Users/seira/Desktop/Classes/Capstone/Data Files")
+```
+
+```{r}
+# reading in the dataset
+df = read.csv("capstone_data_processed_v2.csv")
+library(tidyverse)
+library(scales)
+library(tidytext)
+library(ggridges)
+```
+
+Building a single destination_group column from the 3 target variable cols
+```{r}
+df <- df %>%
+  mutate(
+    destination_group = case_when(
+      is_nw5 == 1 ~ "NW5",
+      is_three_large_public == 1 ~ "Three Large Public",
+      is_local_public == 1 ~ "Local Public",
+      is_local_private == 1 ~ "Local Private",
+      TRUE ~ NA_character_
+    ),
+    destination_group = factor(
+      destination_group,
+      levels = c("NW5", "Three Large Public", "Local Public", "Local Private", "Other")
+    )
+  )
+
+df %>% count(destination_group)
+```
+
+Creating a color scheme for the three destination groups
+```{r}
+dest_colors <- c(
+  "NW5" = "#fbb4ae", 
+  "Three Large Public" = "#b3cde3",
+  "Local Public" = "#ccebc5",
+  "Local Private" = "#decbe4" 
+)
+```
+
+
+```{r}
+# some character columns need to be changed to date columns
+df <- df %>%
+  mutate(
+    app_created = as.Date(app_created, format = "%Y-%m-%d"),
+    app_submitted = as.Date(app_submitted, format = "%Y-%m-%d"),
+    prospect_created_date= as.Date(prospect_created_date, format = "%Y-%m-%d"),
+    inquiry_date = as.Date(inquiry_date, format = "%Y-%m-%d"),
+    applicant_date = as.Date(applicant_date, format = "%Y-%m-%d"),
+    first_wc_in_person_visit = as.Date(first_wc_in_person_visit, format ="%Y-%m-%d"),
+    first_wc_virtual_visit = as.Date(first_wc_virtual_visit, format = "%Y-%m-%d"),
+    most_recent_wc_in_person_visit = as.Date(most_recent_wc_in_person_visit, format = "%Y-%m-%d"),
+    first_wc_virtual_visit = as.Date(first_wc_virtual_visit, format = "%Y-%m-%d"),
+    first_wc_travel_visit = as.Date(first_wc_travel_visit, format = "%Y-%m-%d"), 
+    most_recent_wc_travel_visit = as.Date(most_recent_wc_travel_visit, format = "%Y-%m-%d"),
+    person_fafsa_submit_date  = as.Date(person_fafsa_submit_date, format = "%Y-%m-%d")
+  )
+```
+
+## GRAPH 1: Comparing primary academic interest across the destination groups
+```{r}
+major_top10 <- df %>%
+  filter(!is.na(app_academic_interest), !is.na(destination_group)) %>%
+  count(destination_group, app_academic_interest) %>%
+  group_by(destination_group) %>%
+  mutate(pct = n / sum(n)) %>%
+  slice_max(order_by = pct, n = 10) %>%
+  ungroup()
+
+ggplot(major_top10, aes(x = reorder_within(app_academic_interest, pct, destination_group),y = pct, fill = destination_group)) + 
+  geom_col(width = 0.7, show.legend = FALSE, color = "black", linewidth = 0.2) +
+  facet_wrap(~ destination_group, scales = "free_y") +
+  coord_flip() +
+  scale_x_reordered() +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.1))) +
+  scale_fill_manual(values = dest_colors) +
+  labs(
+    title = "Top 10 Primary Academic Interests by Destination Group",
+    x = NULL, 
+    y = "Share of applicants"
+  ) +
+  theme_bw()
+```
+
+Overall, there's not much difference in primary academic interests at the point of application for the different types of schools. Business, Psychology and Biology are high up in all three destination categories. Undecided being high in NW5 aligns with the idea of having a broad general curriculum in a liberal arts college before deciding on your major. 
+
+## GRAPH 2: Looking at how engagement with the school may affect destination
+```{r}
+engagement <- df %>%
+  filter(!is.na(destination_group)) %>%
+  mutate(
+    ever_visited = as.integer(!is.na(first_wc_in_person_visit) | !is.na(first_wc_virtual_visit)),
+    legacy = as.integer(relative_attended_wu)
+  ) %>%
+  select(destination_group, ever_visited, legacy) %>%
+  pivot_longer(
+    cols = c(ever_visited, legacy),
+    names_to = "metric", values_to = "flag"
+  ) %>%
+  mutate(
+    metric = recode(metric,
+      ever_visited = "Ever Visited (in-person or virtual)",
+      legacy = "Legacy (Relative Attended WU)"
+    )
+  ) %>%
+  group_by(destination_group, metric) %>%
+  summarise(pct_yes = mean(flag, na.rm = TRUE), .groups = "drop")
+ 
+ggplot(engagement, aes(x = destination_group, y = pct_yes, fill = destination_group)) +
+  geom_col(width = 0.7, color = "black", linewidth = 0.2) +
+  facet_wrap(~ metric,scales = "free_y") +
+  scale_fill_manual(values = dest_colors) +
+  labs(
+    title = "Engagement by Destination Group",
+    subtitle = "Share of applicants who visited campus / are legacy students",
+    x = NULL, y = "% of applicants", fill = NULL
+  ) +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 15, margin = margin(7,0,0,0))) +
+  scale_y_continuous(labels = percent_format(accuracy = 1),expand = expansion(mult = c(0, 0.05)))
+```
+
+
+A student who goes to a NW5 school is more likely to have visited the campus (physically or virtually), which makes sense since NW5 schools are all clustered around the same area. One thing really interesting here is that a legacy student has the highest percentage of going to either OSU, UoO, or PSU. This could mean that a student wanted to stay in the same state as their family or where their parents had gone to, but wanted the completely opposite experience (big school).
+
+## GRAPH 3: Comparing competitive scholarship interests across the destination groups
+
+Looking into further interests
+- talent_scholarships (list of interests comma delimited)
+- has_competitive_scholarship_application (0/1)
+- competitive_scholarship_interest (list of interests comma delimited, seems to be the same as talent_scholarships)
+- dual_degree_interest (name of interest)
+- has_dual_degree_letter (0/1)
+
+```{r}
+comp_schol_interest <- df %>%
+  filter(!is.na(competitive_scholarship_interest)) %>%
+  select(destination_group, competitive_scholarship_interest) %>%
+  mutate(competitive_scholarship_interest = 
+           strsplit(competitive_scholarship_interest, ",")) %>%
+  unnest(competitive_scholarship_interest) %>%
+  mutate(competitive_scholarship_interest = 
+           str_trim(competitive_scholarship_interest)) %>%
+  filter(competitive_scholarship_interest != "") %>%
+  count(destination_group, competitive_scholarship_interest, sort = TRUE) %>%
+  group_by(destination_group) %>%
+  mutate(pct = n/sum(n)) %>%
+  ungroup()
+
+# Another bar chart
+# comp_schol_interest %>%
+#   group_by(destination_group) %>%
+#   slice_max(n, n = 5) %>%
+#   ggplot(aes(x = reorder(competitive_scholarship_interest, pct), y = pct, fill = destination_group)) +
+#   geom_col(show.legend = FALSE) +
+#   facet_wrap(.~ destination_group) +
+#   labs(
+#     title = "Top Competitive Scholarship Interests by Destination Group",
+#     x = "Count",
+#     y = NULL
+#   ) +
+#   scale_fill_manual(values = dest_colors) +
+#   theme_minimal()+
+#   coord_flip()
+
+# trying to create a heatplot with the same information since there's 8 competitive scholarships so it wouldn't be too messy
+ggplot(comp_schol_interest,aes(x= destination_group,y = competitive_scholarship_interest, fill = pct)) +
+  geom_tile(color="white") +
+  geom_text(aes(label = percent(pct, accuracy = 1)), size = 3, color = "black") +
+  scale_fill_gradient(low = "#F5F0FA", high = "#4B2E83", labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Top Competitive Scholarship Interests by Destination Group",
+    subtitle = "% within each destination group",
+    x = NULL,
+    y = NULL
+  ) + 
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  theme(legend.position = "none")
+
+```
+STEM is definitely a popular competitive scholarship across all destination groups, with the highest in Local Large Public. In comparison, Theatre and Music is the lowest at local large public schools, and instead has the highest percentage in NW5 and Local Private schools, which shows the school's strengths. 
+
+## GRAPH 4: Looking at timeline of visits to application submission across the destination groups
+
+```{r}
+timeline <- df %>%
+  filter(!is.na(destination_group)) %>%
+  mutate(first_visit = pmin(first_wc_in_person_visit, first_wc_virtual_visit, first_wc_travel_visit, na.rm = TRUE),
+         days_to_submit  = as.numeric(difftime(app_submitted, first_visit),unit = "days")
+         ) %>%
+  filter(!is.na(days_to_submit),days_to_submit >= 0)
+
+
+ggplot(timeline,aes(x = days_to_submit, y = destination_group, fill = destination_group)) +
+  geom_density_ridges(alpha = 0.8, show.legend = FALSE) +
+  scale_fill_manual(values = dest_colors) +
+  theme_minimal() +
+  coord_cartesian(xlim = c(0, 548)) +
+  labs(
+    title = "Time from First Campus or Travel Visit to Application Submission",
+    subtitle = "By destination group. Zoomed into 1.5 years for trend comparison.",
+    x = "Days from first visit to submission", y = NULL
+  ) 
+```
+Most of the groups look the same, but NW5 seems to have a slight delay in trend. Their days from first visit to submission is peaking at 100 days rather than around 50 days.
+
+## GRAPH 5: Comparing dual degree interests across the destination groups
+
+```{r}
+# Graph on dual degree interest
+dual_degree_interest <- df %>%
+  filter(!is.na(dual_degree_interest), dual_degree_interest != "") %>%
+  select(destination_group, dual_degree_interest) %>%
+  mutate(dual_degree_interest = 
+           strsplit(dual_degree_interest, ",")) %>%
+  unnest(dual_degree_interest) %>%
+  mutate(dual_degree_interest = 
+           str_trim(dual_degree_interest)) %>%
+  count(destination_group, dual_degree_interest, sort = TRUE) %>%
+  group_by(destination_group) %>%
+  mutate(pct = n/sum(n)) %>%
+  ungroup()
+
+ggplot(dual_degree_interest,aes(x=dual_degree_interest,y=pct,fill=destination_group)) +
+  geom_col(width = 0.7, show.legend = FALSE, color = "black", linewidth = 0.3)+
+  facet_wrap(.~ destination_group) +
+  labs(
+    title = "Top Dual Degree Interests by Destination Group",
+    x = "Count",
+    y = NULL
+  ) +
+  scale_fill_manual(values = dest_colors) +
+  theme_minimal()+
+  coord_flip()
+
+  
+```
+There's not any standout insights from this graph. 3+2 MBA interest is larger in students who chose a NW5 school or a local private school.
+
+## Comparing Average GPA across the destination groups
+Create combined GPA and look at the average GPA across destination groupings
+For feature engineering, we will drop the Transfer rows since most rows are NA and will be difficult to impute
+```{r}
+# creating a new column for GPA:
+# if transfer GPA exists and weighted GPA NA, do transfer GPA + 1
+# if transfer GPA NA and weighted GPA exists, keep weighted GPA
+# if transfer GPA and weighted GPA both exist, do  ((transfer GPA + 1) + weighted GPA) / 2
+
+df <- df |>
+  mutate(
+    combined_gpa = case_when(
+      !is.na(app_transfer_gpa) & is.na(app_weighted_gpa)  ~ app_transfer_gpa + 1,
+      is.na(app_transfer_gpa)  & !is.na(app_weighted_gpa) ~ app_weighted_gpa,
+      !is.na(app_transfer_gpa) & !is.na(app_weighted_gpa) ~ ((app_transfer_gpa + 1) + app_weighted_gpa) / 2,
+      TRUE ~ NA_real_  # both NA
+    )
+  )
+df %>%
+  group_by(destination_group) %>%
+  summarize(avg_gpa = mean(combined_gpa))
+```
+
+## Graph 6-8: Comparing financial needs across destination groups
+```{r}
+#fafsa submitted yes/no
+
+fafsa <- df %>%
+  filter(!is.na(destination_group)) %>%
+  mutate(submitted_fafsa = if_else(!is.na(person_fafsa_submit_date), 1, 0)) %>%
+  group_by(destination_group) %>% 
+  summarise(pct_yes = mean(submitted_fafsa, na.rm = TRUE), .groups = "drop")
+
+ggplot(fafsa, aes(x = destination_group,y = pct_yes, fill = destination_group)) +
+  geom_col(width = 0.7, color = "black", linewidth = 0.3) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.05))) +
+  scale_fill_manual(values = dest_colors) +
+  labs(
+    title = "FAFSA Submission Count by Destination Group",
+    x = NULL, y = "% of applicants", fill = NULL
+  ) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 15, margin = margin(7,0,0,0)))
+```
+
+```{r}
+efc_data <- df %>%
+  filter(!is.na(destination_group), !is.na(efc_sai))
+ 
+ggplot(efc_data, aes(x = destination_group, y = efc_sai, fill = destination_group)) +
+  geom_boxplot(outlier.alpha = 0.3, width = 0.6) +
+  scale_fill_manual(values = dest_colors) +
+  labs(
+    title = "EFC / SAI Distribution by Destination Group",
+    x = NULL, y = "EFC / SAI", fill = NULL
+  ) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 15, margin = margin(7,0,0,0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05)))
+```
+
+```{r}
+aid_data <- df %>%
+  filter(!is.na(destination_group)) %>%
+  select(destination_group, common_app_fee_waiver, need_based_aid) %>%
+  pivot_longer(
+    cols = c(common_app_fee_waiver, need_based_aid),
+    names_to = "aid_type", values_to = "flag"
+  ) %>%
+  mutate(
+    aid_type = recode(aid_type,
+      common_app_fee_waiver = "Fee Waiver",
+      need_based_aid = "Need-Based Aid"
+    )
+  ) %>%
+  group_by(destination_group, aid_type) %>%
+  summarise(pct_yes = mean(flag, na.rm = TRUE), .groups = "drop")
+ 
+ggplot(aid_data, aes(x = destination_group, y = pct_yes, fill = destination_group)) +
+  geom_col(width = 0.7,color = "black", linewidth = 0.3) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.05))) +
+  scale_fill_manual(values = dest_colors) +
+  facet_grid(~aid_type) +
+  labs(
+    title = "Financial Aid Indicators by Destination Group",
+    subtitle = "Fee waiver and need-based aid rates",
+    x = NULL, y = "% of applicants", fill = NULL
+  ) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 15, margin = margin(7,0,0,0)))
+```
+Financial aid indicators show applicants in Three Large Public and Local Large Public Groupings to have the highest needs. FAFSA submission is high across all groupings, but EFC/SAI distribution boxplot show that students who went to OSU, UoO, and PSU generally have lower income then the other groupings. Additionally, that grouping also requested the largest proportion of fee waivers when applying to university. Need based aid consideration is highest for Local Large Public students, with three large public students following. Across these financial needs graphs, we see that NW5 students have proportionally the lowest need for financial support.
+

@@ -1,0 +1,280 @@
+---
+title: "Feature Engineering"
+date: last-modified
+author: "Courtney St. Onge & Seira Ramchandani"
+format: html
+jupyter: python3
+---
+
+```{python}
+#import libraries
+import numpy as np
+import pandas as pd
+```
+
+```{python}
+df = pd.read_csv("../../data/processed/capstone_data_processed.csv")
+
+# print(df.columns)
+print(df.duplicated().sum())
+print(df.shape)
+```
+
+Dropping columns that are not useful for modeling
+```{python}
+# drop 'school_1_address_geomarket' as well for Version 1 but keep for Version 2 (for splitting up regions within OR and WA)
+df = df.drop(columns=['slate_id', 'colleague_id', 'round','talent_scholarships','gender_identity','primary_citizenship','secondary_citizenship', 'active_city', 'first_source_origin_first_source_memo','entry_term', 'academic_interest','activity_interest','school_1_code','school_1_name','app_academic_interest','dual_degree_interest','competitive_scholarship_interest','application_origin','app_unweighted_gpa','app_transfer_gpa','appl_students_id','appl_acad_program','appl_start_term','college_name','college_state','private','ic2025size'])
+
+print(df.shape)
+```
+
+Dropping additional columns for version 2
+```{python}
+# Version 2: dropping all columns that are not inherent characteristics of their application profile (visits, interests, etc.)
+df = df.drop(columns = ['first_wc_in_person_visit','first_wc_virtual_visit','most_recent_wc_in_person_visit','most_recent_wc_virtual_visit','first_wc_travel_visit','most_recent_wc_travel_visit','hold_decision_released','has_dual_degree_letter'])
+
+print(df.shape)
+```
+
+```{python}
+df['sex'].unique()
+df['admission_plan'].unique()
+df['person_citizenship_status'].unique()
+df['permanent_resident'].unique()
+```
+
+Deciding to drop transfer students for this analysis, since most of the columns are NA.
+```{python}
+df = df[df['transfer'] == 0]
+df = df.drop(columns=['transfer'])
+print(df.shape)
+```
+
+Creating a new column for the number of days from app created to app submitted
+```{python}
+df['days_to_submit'] = (pd.to_datetime(df['app_submitted']) - pd.to_datetime(df['app_created'])).dt.days
+
+print(df['days_to_submit'].mean())
+# 50 days on average to submit an application
+```
+
+Admission Plan Dummy Encoding
+```{python}
+df['admission_plan'] = pd.Categorical(df['admission_plan'], categories=['RD', 'EA', 'ED'])
+df = pd.get_dummies(df, columns=['admission_plan'], drop_first=True, dtype=int)
+```
+
+Sex Dummy Encoding
+```{python}
+df['sex'] = pd.Categorical(df['sex'], categories=['F', 'M', 'X'])
+df = pd.get_dummies(df, columns=['sex'], drop_first=True, dtype=int)
+```
+
+Person Citizenship Status and Permanent Resident Cleaned
+```{python}
+df.loc[df['person_citizenship_status'].isna(), ['active_region', 'active_country', 'permanent_resident']]
+
+df[(df['person_citizenship_status'] == "PR") & (df['permanent_resident'] == 0)]
+
+df['person_citizenship_status'] = df['person_citizenship_status'].fillna('US')
+
+df.loc[(df['person_citizenship_status'] != "PR") & (df['permanent_resident'] == 1),['active_region','person_citizenship_status','active_country', 'permanent_resident']]
+
+# there are 12 records that are mismatched (US citizenship status but permanent resident = 1). We will treat the person_citizenship_status as the correct value.
+```
+
+Person Citizenship Status Dummy Encoding
+```{python}
+df['person_citizenship_status'] = pd.Categorical(df['person_citizenship_status'], categories=['US','FR','PR'])
+df = pd.get_dummies(df, columns=['person_citizenship_status'], drop_first=True, dtype=int)
+
+df.drop(columns=['permanent_resident'], inplace=True)
+```
+
+Version 1: Splitting Active Region into Categories based on Willamette Admissions Geomarkets
+```{python}
+conditions = [
+    df['active_region'].isin(['OR']),
+    df['active_region'].isin(["WA"]),
+    df['active_region'].isin(["CA"]),    
+    df['active_region'].isin(['AK','AZ', 'CO','HI','ID', 'MT', 'NV', 'NM', 'UT','WY', 'TX']),
+    df['active_region'].isin(['ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN','MA', 'VT', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC','ME','AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL']),
+    (df['active_region'].isin(['PR','GU','VI','AP','AE']))
+        | (df['active_region'].isna() & (df['active_country'] != 'United States') & df['active_country'].notna())
+        | ((df['active_country'] != 'United States') & df['active_region'].notna())
+]
+
+choices = ['OR', 'WA', 'CA', 'Secondary', 'Other States','International/Other']
+
+df['n_region'] = np.select(conditions, choices, default='Unknown')
+
+#df.loc[df['n_region'] == 'Unknown', ['active_region', 'active_country']]
+```
+
+Version 2: Splitting Active Region into Categories based on Willamette Admissions Geomarkets (OR and WA are split into further regions within State)
+
+```{python}
+conditions = [
+    df['school_1_address_geomarket'].isin(['OR-01 Greater Portland (West)']),
+    df['school_1_address_geomarket'].isin(['OR-02 Greater Portland (East)']),
+    df['school_1_address_geomarket'].isin(['OR-03 Northern Valley (Coast)']),
+    df['school_1_address_geomarket'].isin(['OR-04 Southern Valley']),
+    df['school_1_address_geomarket'].isin(['OR-05 Southwest Oregon']),
+    df['school_1_address_geomarket'].isin(['OR-06 East Oregon']),
+    df['school_1_address_geomarket'].isin(["WA-01 Greater Seattle"]),
+    df['school_1_address_geomarket'].isin(["WA-02 South Sound"]),
+    df['school_1_address_geomarket'].isin(["WA-03 Greater Spokane"]),
+    df['school_1_address_geomarket'].isin(["WA-04 Greater Washington (East)"]),
+    df['school_1_address_geomarket'].isin(["WA-05 Greater Washington (West)"]),
+    df['school_1_address_geomarket'].isin(["WA-06 Bellingham Area"]),
+    df['active_region'].isin(["CA"]),    
+    df['active_region'].isin(['AK','AZ', 'CO','HI','ID', 'MT', 'NV', 'NM', 'UT','WY', 'TX']),
+    df['active_region'].isin(['ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN','MA', 'VT', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC','ME','AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL']),
+    (df['active_region'].isin(['PR','GU','VI','AP','AE']))
+        | (df['active_region'].isna() & (df['active_country'] != 'United States') & df['active_country'].notna())
+        | ((df['active_country'] != 'United States') & df['active_region'].notna())
+]
+
+choices = ['OR-01', 'OR-02', 'OR-03', 'OR-04', 'OR-05', 'OR-06', 'WA-01', 'WA-02', 'WA-03', 'WA-04', 'WA-05', 'WA-06','CA', 'Secondary', 'Other States','International/Other']
+
+df['n_region'] = np.select(conditions, choices, default='Unknown')
+
+#df.loc[df['n_region'] == 'Unknown', ['active_region', 'active_country']]
+```
+
+Version 1: Active Region & International Dummy Encoding
+```{python}
+df['n_region'] = pd.Categorical(df['n_region'], categories=['OR', 'WA', 'CA', 'Secondary', 'Other States','International/Other','Unknown'])
+df = pd.get_dummies(df, columns=['n_region'], drop_first=True, dtype=int)
+
+df = df.drop(columns=['active_region', 'active_country'])
+```
+
+Version 2: Active Region & International Dummy Encoding
+```{python}
+df['n_region'] = pd.Categorical(df['n_region'], categories=['OR-01', 'OR-02', 'OR-03', 'OR-04', 'OR-05', 'OR-06', 'WA-01', 'WA-02', 'WA-03', 'WA-04', 'WA-05', 'WA-06', 'CA', 'Secondary', 'Other States','International/Other','Unknown'])
+
+df = pd.get_dummies(df, columns=['n_region'], drop_first=True, dtype=int)
+
+df = df.drop(columns=['active_region', 'active_country','school_1_address_geomarket'])
+
+df = df.drop(columns=['app_submitted'])
+```
+
+Creating a new column for the number of days from prospect created to app created + had inquiry column (1/0)
+```{python}
+df['days_prospect_to_app'] = (pd.to_datetime(df['app_created']) - pd.to_datetime(df['prospect_created_date'])).dt.days
+
+df['had_inquiry'] = df['inquiry_date'].notna().astype(int)
+
+df = df.drop(columns=['prospect_created_date', 'inquiry_date', 'app_created','applicant_date'])
+```
+
+Version 1: Creating new columns for the number of days from first visit to app submitted + had visit column (1/0)
+(version 2 doesn't look at visits)
+```{python}
+visit_types = {
+    'in_person': 'first_wc_in_person_visit',
+    'virtual': 'first_wc_virtual_visit',
+    'travel': 'first_wc_travel_visit'
+}
+
+# imputing the median for the days from visit to app submitted for those who did not have a visit
+for label, col in visit_types.items():
+    df[col] = pd.to_datetime(df[col])
+    flag_col = f'visited_{label}'
+    diff_col = f'days_visit_to_submit_{label}'
+
+    df[flag_col] = df[col].notna().astype(int)
+    df[diff_col] = (df[col] - pd.to_datetime(df['app_submitted'])).dt.days
+    df[diff_col] = df[diff_col].fillna(df[diff_col].median())
+
+df = df.drop(columns=['app_submitted', 'first_wc_in_person_visit', 'first_wc_virtual_visit', 'first_wc_travel_visit', 'most_recent_wc_in_person_visit', 'most_recent_wc_virtual_visit', 'most_recent_wc_travel_visit'])
+```
+
+Similar to the visit columns, creating a had rec value column (1/0), and imputing the median for the rec_value column for those who did not have a rec value
+```{python}
+df['has_rec_value'] = df['rec_value'].notna().astype(int)
+df['rec_value'] = df['rec_value'].fillna(df['rec_value'].median())
+```
+
+Imputing common_app_fee_waiver column with 0 for the rows that are NA
+```{python}
+df['common_app_fee_waiver'] = df['common_app_fee_waiver'].fillna(0)
+```
+
+Filling in the one NA value in the need_based_aid column with the mode of the column
+```{python}
+df['need_based_aid'] = df['need_based_aid'].fillna(df['need_based_aid'].mode()[0])
+```
+
+Imputing edi_access_check column with 0 for the rows that are NA
+```{python}
+#df['first_gen_status'].unique()
+print(df['edi_access_check'].value_counts())
+df['edi_access_check'] = df['edi_access_check'].fillna(0)
+```
+
+Similar to the visit columns, creating a had test score column (1/0), and imputing the median for the converted_satr_superscore column for those who did not have a test score
+```{python}
+df['has_test_score'] = df['converted_satr_superscore'].notna().astype(int)
+df['converted_satr_superscore'] = df['converted_satr_superscore'].fillna(
+    df['converted_satr_superscore'].median()
+)
+```
+
+Similar to the visit columns, creating a had fafsa column (1/0), and imputing the median for the efc_sai column for those who did not submit a fafsa
+
+```{python}
+df['submitted_fafsa'] = df['person_fafsa_submit_date'].notna().astype(int)
+df['efc_sai'] = df['efc_sai'].fillna(df['efc_sai'].median())
+
+df = df.drop(columns=['person_fafsa_submit_date'])
+```
+
+Ipeds Classification Dummy Encoding
+```{python}
+# df['ipeds_classification'].unique()
+categories = ['White', 'Two or more races', 'Asian', 'Hispanic of any race','Nonresident Alien', 'Race/Ethnicity Unknown','American Indian or Alaska Native', 'Black or African American','Native Hawaiian or Other Pacific Islander']
+
+df['ipeds_classification'] = pd.Categorical(df['ipeds_classification'], categories=categories)
+df = pd.get_dummies(df, columns=['ipeds_classification'], drop_first=True, dtype=int)
+```
+
+Finally, for a our baseline model, we want to use a multinomial logistic regression model, which requires that the target variable be categorical and one column. Therefore, we will convert the target variable to a categorical variable.
+
+Version 1:
+```{python}
+df['destination'] = np.select(
+    [df['is_nw5'] == 1, df['is_three_large_public'] == 1,df["is_local_large_public"] == 1, df['is_local_private'] == 1, df['dest_other'] == 1],
+    ['NW5', 'Three Large Public', 'Local Large Public', 'Local Private', 'Other'], default='Unknown'
+)
+
+df = df.drop(columns=['is_nw5', 'is_three_large_public', 'is_local_large_public', 'is_local_private', 'dest_other'])
+```
+
+Version 2: 
+```{python}
+df['destination'] = np.select(
+    [df['is_nw5'] == 1, df['is_three_large_public'] == 1,df["is_local_public"] == 1, df['is_local_private'] == 1], 
+    ['NW5', 'Three Large Public', 'Local Public', 'Local Private'], default='Unknown'
+)
+
+df = df.drop(columns=['is_nw5', 'is_three_large_public', 'is_local_public', 'is_local_private', 'dest_other'])
+```
+
+Confirming that the input variables are all numeric
+```{python}
+df.drop(columns=['destination']).dtypes.value_counts()
+```
+
+Checking for missing values in the input variables
+```{python}
+df.drop(columns=['destination']).isna().sum().sort_values(ascending=False).head(20)
+```
+
+Exporting the feature enginneering dataset as a csv file to be used for modeling (named capstone_data_modeling.csv)
+
+```{python}
+df.to_csv("../../data/processed/capstone_data_modeling.csv", index=False)
+```

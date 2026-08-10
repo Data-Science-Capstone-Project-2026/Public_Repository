@@ -1,0 +1,590 @@
+---
+title: "Utilizing XGBoost"
+date: last-modified
+author: "Courtney St. Onge & Seira Ramchandani"
+format: html
+jupyter: python3
+---
+
+```{python}
+#import libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import xgboost as xgb
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.feature_selection import SelectFromModel
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import make_classification
+import optuna
+```
+
+```{python}
+# Importing the data
+df = pd.read_csv("..\..\data\processed\capstone_data_modeling.csv")
+```
+
+
+```{python}
+#print(df['destination'].unique())
+df2 = df
+#print(df['destination'].unique)
+status_map = {
+    'Other': 0, 
+    'NW5': 1,
+    'Local Private': 2,
+    'Three Large Public': 3,
+    'Local Large Public': 4 }
+df2['dest_n'] = df2['destination'].map(status_map)
+```
+
+```{python}
+
+# 2. Separate into features (X) and target (y)
+X = df2.drop(columns=["destination", "dest_n"])  # Everything except the target
+y = df2["dest_n"]                 # Only the target column
+
+# 3. Split into training and testing sets (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(
+   X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+```
+
+```{python}
+
+print("\n🔬 Official XGBoost")
+print("=" * 50)
+xgb_official = xgb.XGBClassifier()
+    #n_estimators=100,
+    #max_depth=4,
+    #learning_rate=0.1,
+    #reg_lambda=1.0,
+    #gamma=0.1,
+    #min_child_weight=1.0,
+    #random_state=42,
+    #use_label_encoder=False,
+    #eval_metric='logloss'
+#)
+xgb_official.fit(X_train, y_train)
+y_pred = xgb_official.predict(X_test)
+official_acc = accuracy_score(y_test,y_pred )
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(classification_report(y_test, y_pred))
+print(f"\n{'='*50}")
+```
+
+Intitial XGboost model 
+now has an accuracy rate of 85.26%?? - this has not been able to be recreated and was most likely some sort of error
+
+has a horrible accuracy rate of 49.57%
+
+```{python}
+#xgb_official.get_xgb_params()
+print(xgb_official.n_estimators)
+```
+
+## What parameters should be edited?
+
+### Learning Rate
+
+```{python}
+xgb_official = xgb.XGBClassifier(
+    #n_estimators=100,
+    #max_depth=4,
+    learning_rate=0.25,
+    #reg_lambda=1.0,
+    #gamma=0.1,
+    #min_child_weight=1.0,
+    random_state=42,
+    #use_label_encoder=False,
+    #eval_metric='logloss'
+)
+xgb_official.fit(X_train, y_train)
+official_acc = accuracy_score(y_test, xgb_official.predict(X_test))
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(f"\n{'='*50}")
+```
+
+Next, editing parameters to improve the accuracy
+
+Starting with editing the learning rate
+
+```{python}
+xgb_official = xgb.XGBClassifier(
+    n_estimators=100,
+    max_depth=4,
+    learning_rate=0.1,
+    reg_lambda=1.0,
+    gamma=0.1,
+    min_child_weight=1.0,
+    random_state=42,
+    use_label_encoder=False,
+    eval_metric='logloss'
+)
+xgb_official.fit(X_train, y_train)
+official_acc = accuracy_score(y_test, xgb_official.predict(X_test))
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(f"\n{'='*50}")
+```
+
+after editing only the learning rate, we will end with learning rate of 0.1.
+
+
+Step 2: Finding the optimal number of n_estimators using early stopping
+
+```{python}
+from xgboost import XGBClassifier # Or XGBRegressor
+from sklearn.model_selection import train_test_split
+
+# Split data into training and validation sets
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# 1. Initialize with high n_estimators and early stopping rounds
+model = XGBClassifier(
+    n_estimators=5000,          # Set high so early stopping handles the cutoff
+    learning_rate=0.05,         # Pair high n_estimators with a low learning rate
+    early_stopping_rounds=50,   # Stops if validation score doesn't improve for 50 rounds
+    random_state=42
+)
+
+# 2. Fit the model providing the validation set
+model.fit(
+    X_train, y_train,
+    eval_set=[(X_val, y_val)],  # The dataset used to monitor performance
+    verbose=False
+)
+
+# 3. Retrieve the optimal number of estimators
+optimal_n_estimators = model.best_iteration + 1
+print(f"Optimal n_estimators: {optimal_n_estimators}")
+
+```
+
+According to this, the optimal n_estimators is 70
+after adding stratify=y, optimal n_estimators is 60
+
+Next, we will make sure that the rest of the parameters are actually the defaults
+- Changed max_depth to 6, gamma to 0
+Editing the n_estimators next
+
+
+
+```{python}
+xgb_official = xgb.XGBClassifier(
+    n_estimators=60,
+    max_depth=6,
+    learning_rate=0.1,
+    reg_lambda=1.0,
+    gamma=0,
+    min_child_weight=1.0,
+    random_state=42,
+    eval_metric='logloss'
+)
+xgb_official.fit(X_train, y_train)
+official_acc = accuracy_score(y_test, xgb_official.predict(X_test))
+print(f"📊 Test Accuracy: {official_acc:.4f}")
+print(f"\n{'='*50}")
+```
+
+With 70 estimators, the accuracy is now up to 66.33%
+With 60 estimators and stratify=y, accuracy is 52%
+
+### Old Optuna
+
+#### Using Optuna to tune the hyperparameters
+
+```{python}
+import xgboost as xgb
+from sklearn.model_selection import cross_val_score
+#this example from internet
+# Defining the objective function
+def objective(trial):
+    param = {
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1),
+        'n_estimators': trial.suggest_int('n_estimators', 60, 1000),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+        'gamma': trial.suggest_float('gamma', 0, 5),
+    }
+    
+    # initializing the XGBoost model
+    model = xgb.XGBClassifier(**param)
+
+    score = cross_val_score(model, X_train, y_train, cv=3).mean()   # calculating score using cross-validation
+    return score
+                              
+```
+
+```{python}
+import optuna
+
+# Create and run the optimization process with 100 trials
+study = optuna.create_study(study_name="example_xgboost_study", direction='maximize') 
+study.optimize(objective, n_trials=100, show_progress_bar=True, n_jobs=-1)   
+
+# Retrieve the best parameter values
+best_params = study.best_params
+print(f"\nBest parameters: {best_params}")
+```
+
+According to this (which seems like a lie), 
+the best parameters are 
+Best parameters: {'max_depth': 8, 'learning_rate': 0.022890413213900115, 'n_estimators': 979, 'subsample': 0.7471271761550425, 'colsample_bytree': 0.8825747327301477, 'min_child_weight': 3, 'gamma': 2.5652077272265164}
+
+After running the above cell a second time (after including stratify=y), the new best parameters are:
+
+Best parameters: {'max_depth': 7, 'learning_rate': 0.09937245630446315, 'n_estimators': 641, 'subsample': 0.9831418986098582, 'colsample_bytree': 0.9376694292359794, 'min_child_weight': 3, 'gamma': 2.9091509932323634}
+
+```{python}
+
+xgb_official = xgb.XGBClassifier(
+    n_estimators=1000,
+    max_depth=8,
+    learning_rate=0.02289,
+    subsample = 0.747127,
+    colsample_bytree= 0.882574,
+    gamma=2.5652077272265164,
+    min_child_weight=3,
+    random_state=42
+    #eval_metric='logloss'
+)
+xgb_official.fit(X_train, y_train)
+official_acc = accuracy_score(y_test, xgb_official.predict(X_test))
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(f"\n{'='*50}")
+
+```
+
+
+#### Optuna pt 2
+
+
+```{python}
+import optuna
+from sklearn.model_selection import cross_val_score
+# this example from class
+def objective(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 60, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.3, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 1, 10
+        ),
+        'gamma': trial.suggest_float('gamma', 0, 5),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, 1.0
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 10, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 10, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'logloss'
+    }
+    
+    model = xgb.XGBClassifier(**params)
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(objective, n_trials=100, show_progress_bar=True)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='logloss'
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+
+Resulting parameters: (run 7/25)
+
+n_estimators: 331
+  max_depth: 9
+  learning_rate: 0.018646435849636628
+  min_child_weight: 3
+  gamma: 3.264134828015655
+  subsample: 0.9676879641483143
+  colsample_bytree: 0.9180717192020778
+  reg_alpha: 0.20996147998273787
+  reg_lambda: 0.00017574698854350252
+
+  Best CV Accuracy: 0.5231
+  Test Accuracy: 0.5601
+
+
+This is very intriguing. Without using any parameters except for random_state, the model is returning an 85% accuracy. However, once any parameters are modified, it drastically decreases. 
+
+Resulting Parameters (7/27):
+
+n_estimators: 743
+  max_depth: 6
+  learning_rate: 0.029863006511052427
+  min_child_weight: 5
+  gamma: 3.8885737436102517
+  subsample: 0.9723693805739555
+  colsample_bytree: 0.9442519585933185
+  reg_alpha: 1.5410881857259228e-07
+  reg_lambda: 1.2288576110441142e-08
+
+  Best CV Accuracy: 0.5262
+  Test Accuracy: 0.5190
+
+
+
+### Optuna with correct Evaluation Metric
+
+In the previous versions of using Optuna, logloss was used (binary classification) instead of mlogloss(multiclass classification)
+Apparently scaling is not needed with xgboost, so it will not be utilized.
+
+
+
+```{python}
+
+# this example from class
+def objective(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 60, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.2, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 1, 10
+        ),
+        'gamma': trial.suggest_float('gamma', 0, 5),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, 1.0
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 10, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 10, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'mlogloss'
+    }
+    
+    model = xgb.XGBClassifier(**params)
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(objective, n_trials=100, show_progress_bar=True)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='mlogloss'
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+Resulting Parameters
+
+
+
+Take 2 Optuna with addition of Pruning
+
+```{python}
+# this example from class
+def objective(trial):
+    """Optuna objective for XGBoost hyperparameter tuning"""
+    
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 60, 1000),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float(
+            'learning_rate', 0.01, 0.2, log=True
+        ),
+        'min_child_weight': trial.suggest_int(
+            'min_child_weight', 1, 10
+        ),
+        'gamma': trial.suggest_float('gamma', 0, 5),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float(
+            'colsample_bytree', 0.3, 1.0
+        ),
+        'reg_alpha': trial.suggest_float(
+            'reg_alpha', 1e-8, 10, log=True
+        ),
+        'reg_lambda': trial.suggest_float(
+            'reg_lambda', 1e-8, 10, log=True
+        ),
+        'random_state': 42,
+        'eval_metric': 'mlogloss'
+    }
+    
+    model = xgb.XGBClassifier(**params)
+    scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring='accuracy'
+    )
+    
+    return scores.mean()
+# Run optimization
+study = optuna.create_study(direction='maximize')
+study.optimize(objective, n_trials=100, show_progress_bar=True)
+print("\n🏆 BEST PARAMETERS:")
+print("=" * 50)
+for key, value in study.best_params.items():
+    print(f"  {key}: {value}")
+print(f"\n  Best CV Accuracy: {study.best_value:.4f}")
+# Train final model with best parameters
+best_model = xgb.XGBClassifier(
+    **study.best_params,
+    random_state=42,
+    eval_metric='mlogloss'
+)
+best_model.fit(X_train, y_train)
+best_acc = accuracy_score(y_test, best_model.predict(X_test))
+print(f"  Test Accuracy: {best_acc:.4f}")
+```
+
+Resulting Parameters
+
+ n_estimators: 466
+  max_depth: 7
+  learning_rate: 0.01096523598390972
+  min_child_weight: 10
+  gamma: 2.1565537050489976
+  subsample: 0.8778577868270508
+  colsample_bytree: 0.8869416202002532
+  reg_alpha: 0.06285564975103758
+  reg_lambda: 0.004367517785236967
+
+  Best CV Accuracy: 0.5276
+  Test Accuracy: 0.5213
+
+
+
+
+
+
+## Feature Importance
+
+For this work, the model that will be used will be the last model that optuna recommended (7/27 run). The train test split is from the first cell in the notebook with stratify=y included.
+
+
+### Scaling Data
+
+```{python}
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+```
+
+
+```{python}
+#Using the parameters from the 7/25 Optuna run
+xgb_official = xgb.XGBClassifier(
+    n_estimators=331,
+    max_depth=9,
+    learning_rate=0.018646,
+    subsample = 0.96768,
+    colsample_bytree= 0.918,
+    gamma=3.2641,
+
+    min_child_weight=3,
+    random_state=42,
+    #eval_metric='logloss'
+  reg_alpha= 0.2099,
+  reg_lambda= 0.000175
+)
+xgb_official.fit(X_train, y_train)
+official_acc = accuracy_score(y_test, xgb_official.predict(X_test))
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(f"\n{'='*50}")
+
+```
+Results in test accuracy of 51.9%
+
+```{python}
+#Using the parameters from the 7/27 Optuna run
+xgb_official = xgb.XGBClassifier(
+    n_estimators=743,
+  max_depth=6,
+  learning_rate=0.029863006511052427,
+  min_child_weight=5,
+  gamma=3.8885737436102517,
+  subsample=0.9723693805739555,
+  colsample_bytree=0.9442519585933185,
+  reg_alpha=1.5410881857259228e-07,
+  reg_lambda=1.2288576110441142e-08
+)
+xgb_official.fit(X_train, y_train)
+official_acc = accuracy_score(y_test, xgb_official.predict(X_test))
+print(f"📊 Test Accuracy (Official): {official_acc:.4f}")
+print(f"\n{'='*50}")
+
+```
+Results in test accuracy of 52.13%
+
+```{python}
+thresholds = np.sort(xgb_official.feature_importances_)
+```
+
+```{python}
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+```
+
+```{python}
+model = xgb_official
+for thresh in thresholds:
+ # select features using threshold
+ selection = SelectFromModel(model, threshold=thresh, prefit=True)
+ select_X_train = selection.transform(X_train_scaled)
+ # train model
+ selection_model = xgb.XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1)
+ selection_model.fit(select_X_train, y_train)
+ # eval model
+ select_X_test = selection.transform(X_test_scaled)
+ predictions = selection_model.predict(select_X_test)
+ accuracy = accuracy_score(y_test, predictions)
+ print("Thresh=%.3f, n=%d, Accuracy: %.2f%%" % (thresh, select_X_train.shape[1], accuracy*100.0))
+```
+
+We can see from this result that using a middle number of features results in the highest accuracy. 
+Using 50 estimators is 51.9%, but we reached 52% with 36 estimators. However, we would need to see which features are the most accurate.
+
+Goal:
+- Figure out which features are actually the most important and work through this model and make it better and adjust it

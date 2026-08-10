@@ -1,0 +1,242 @@
+
+SVM Model 
+
+
+```{python}
+import sklearn
+import numpy as np
+import pandas as pd
+import matplotlib as mpl
+np.random.seed(42)
+
+import seaborn as sns
+from sklearn.utils import resample
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.decomposition import PCA
+import matplotlib.colors as colors
+import matplotlib.pyplot as plt
+```
+
+```{python}
+# Importing the data
+df2 = pd.read_csv("..\..\data\processed\capstone_data_modeling.csv")
+```
+
+```{python}
+
+#print(df['destination'].unique)
+status_map = {'Other': 0, 'Local Private': 2, 'NW5': 1, 'Three Large Public': 3, 'Local Large Public': 4 }
+df2['dest_n'] = df2['destination'].map(status_map)
+
+# 2. Separate into features (X) and target (y)
+X = df2.drop(columns=["destination", "dest_n"])  # Everything except the target
+y = df2["dest_n"]                 # Only the target column
+```
+
+```{python}
+#df2.head(10)
+
+#selecting columns with mostly null values to potentially drop them since svm does not perform nearly as well with null values present
+
+#df2.loc[:, df.isnull().mean() > 0.5]
+df2.isnull().sum()
+# there arent any nulls, swag
+```
+
+Scaling data so that std is 1 amongst all columns
+
+```{python}
+from sklearn.preprocessing import scale
+X = df2.drop(columns=["destination", "dest_n"])  # Everything except the target
+y = df2["dest_n"]  
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+#scale the data
+X_train_scaled = scale(X_train)
+X_test_scaled = scale(X_test)
+```
+
+
+```{python}
+
+# 3. Split into training and testing sets (80% train, 20% test)
+#X_train, X_test, y_train, y_test = train_test_split(
+#   X, y, test_size=0.2, random_state=42, stratify=y
+#)
+```
+
+```{python}
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import ConfusionMatrixDisplay
+
+clf_svm = SVC(random_state = 42)
+clf_svm.fit(X_train_scaled, y_train)
+
+#calculate overall accuracy
+y_pred = clf_svm.predict(X_test_scaled)
+accuracy = accuracy_score(y_test, y_pred)
+print(f'Accuracy: {accuracy:.2%}')
+
+class_names = ['Other', 'NW5', 'Local Private', 'Three Large Public', 'Local Large Public']
+disp = ConfusionMatrixDisplay.from_estimator(
+        clf_svm,
+        X_test_scaled,
+        y_test,
+        display_labels=class_names,
+        cmap=plt.cm.Blues)
+```
+
+Well unfortunately, after this, the accuracy is 53.69% and it predicted none of the NW5 correctly. Downsizing the data and then scaling it again may be helpful and it might help. First, we will try to adjust the parameters, but then we will most likely "go back" and try downsizing to try and address the class imbalance
+
+With stratify=y in the defining of the x and y variables, the accuracy went down to 51%
+
+```{python}
+param_grid = {'C':[0.5,0.1,1,10,100,1000],
+              'gamma':['scale', 1,0.1, 0.01,0.001,0.0001],
+              'kernel':['rbf']}
+
+optimal_params = GridSearchCV(SVC(), param_grid, cv = 5, scoring='accuracy', verbose=3)
+optimal_params.fit(X_train_scaled, y_train)
+
+# see "best" parameters
+optimal_params.best_params_
+
+# refit model with optimal hyperparameters
+grid_predictions = optimal_params.predict(X_test.values)
+clf_svm = SVC(random_state = 42, C=.5, gamma=0.01)
+clf_svm.fit(X_train_scaled, y_train)
+
+#calculate overall accuracy
+y_pred = clf_svm.predict(X_test_scaled)
+accuracy = accuracy_score(y_test, y_pred)
+print(f'Accuracy: {accuracy:.2%}')
+
+# plot confusion matrix
+class_names = ['Other', 'NW5', 'Local Private', 'Three Large Public', 'Local Large Public']
+disp = ConfusionMatrixDisplay.from_estimator(
+        clf_svm,
+        X_test_scaled,
+        y_test,
+        display_labels=class_names,
+        cmap=plt.cm.Blues)
+```
+
+The accuracy decreased after this to 52%
+
+### Downsampling data and trying again
+
+Downsampling data in order to make the classes more balanced
+
+
+```{python}
+from sklearn.utils import resample
+
+# split data
+df_other = df2.loc[(df2['dest_n']==0)]
+df_nw5 = df2.loc[(df2['dest_n']==1)]
+df_lop = df2.loc[(df2['dest_n']==2)]
+df_tlp = df2.loc[(df2['dest_n']==3)]
+df_llp = df2.loc[(df2['dest_n']==4)]
+
+# downsample the data set
+df_other_downsampled = resample(df_other, replace=False, n_samples=400, random_state=42 )
+df_nw5_downsampled = resample(df_nw5, replace=False, n_samples=400, random_state=42 )
+df_lop_downsampled = resample(df_lop, replace=False, n_samples=400, random_state=42 )
+df_tlp_downsampled = resample(df_tlp, replace=False, n_samples=400, random_state=42 )
+df_llp_downsampled = resample(df_llp, replace=False, n_samples=400, random_state=42 )
+
+#check ouput
+len(df_other_downsampled)
+len(df_nw5_downsampled)
+len(df_lop_downsampled)
+len(df_tlp_downsampled)
+len(df_llp_downsampled)
+
+# merge the data sets
+df_downsample = pd.concat([df_other_downsampled, df_nw5_downsampled, df_lop_downsampled, df_tlp_downsampled, df_llp_downsampled ])
+len(df_downsample)
+```
+
+```{python}
+from sklearn.preprocessing import scale
+X = df_downsample.drop(columns=["destination", "dest_n"])  # Everything except the target
+y = df_downsample["dest_n"] 
+#y.unique()
+```
+
+```{python}
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+#scale the data
+X_train_scaled = scale(X_train)
+X_test_scaled = scale(X_test)
+```
+
+
+Not using stratifying rn since we did the downsampling
+```{python}
+
+# 3. Split into training and testing sets (80% train, 20% test)
+#X_train, X_test, y_train, y_test = train_test_split(
+ #  X, y, test_size=0.2, random_state=42, stratify=y
+#)
+```
+
+
+```{python}
+
+clf_svm = SVC(random_state = 42)
+clf_svm.fit(X_train_scaled, y_train)
+
+#calculate overall accuracy
+y_pred = clf_svm.predict(X_test_scaled)
+accuracy = accuracy_score(y_test, y_pred)
+print(f'Accuracy: {accuracy:.2%}')
+
+class_names = ['Other', 'NW5', 'Local Private', 'Three Large Public', 'Local Large Public']
+disp = ConfusionMatrixDisplay.from_estimator(
+        clf_svm,
+        X_test_scaled,
+        y_test,
+        display_labels=class_names,
+        cmap=plt.cm.Blues)
+```
+
+Crisp accuracy of 45.75% . It is actually predicting some NW5 though, so that is good.
+
+```{python}
+param_grid = {'C':[0.5,0.1,1,10,100,1000],
+              'gamma':['scale', 1,0.1, 0.01,0.001,0.0001],
+              'kernel':['rbf']}
+
+optimal_params = GridSearchCV(SVC(), param_grid, cv = 5, scoring='accuracy', verbose=3)
+optimal_params.fit(X_train_scaled, y_train)
+
+# see "best" parameters
+optimal_params.best_params_
+
+# refit model with optimal hyperparameters
+grid_predictions = optimal_params.predict(X_test.values)
+clf_svm = SVC(random_state = 42, C=.5, gamma=0.01)
+clf_svm.fit(X_train_scaled, y_train)
+
+#calculate overall accuracy
+y_pred = clf_svm.predict(X_test_scaled)
+accuracy = accuracy_score(y_test, y_pred)
+print(f'Accuracy: {accuracy:.2%}')
+
+# plot confusion matrix
+class_names = ['Other', 'NW5', 'Local Private', 'Three Large Public', 'Local Large Public']
+disp = ConfusionMatrixDisplay.from_estimator(
+        clf_svm,
+        X_test_scaled,
+        y_test,
+        display_labels=class_names,
+        cmap=plt.cm.Blues)
+```
+
+Accuracy increased to 46%

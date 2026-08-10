@@ -1,0 +1,782 @@
+---
+title: "EDA on Admissions Data with updated data"
+date: last-modified
+author: "Courtney St. Onge & Seira Ramchandani"
+format: html
+jupyter: python3
+---
+
+```{python}
+#import libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+```
+
+```{python}
+# Importing the data
+
+df = pd.read_csv("../../data/processed/capstone_data_processed_v2.csv")
+```
+
+```{r}
+library(tidyverse)
+df = read_csv("data/processed/capstone_data_processed_v2.csv")
+is_tibble(df)
+#("C:\\Users\\cocom\\Downloads\\capstone_data_processed.csv")
+```
+
+## Data Exploration
+This is a print-out of the columns, what they are, and what they represent. 
+
+The columns that represent our target variables are 
+- is_nw5
+- is_three_large_public
+- is_local_private
+- is_local_public
+
+These give columns are all booleans, with a 1 representing a truth and a zero representing false. Each row should have 1 out of the three columns that have a 1, and the other two columns should have a zero, since a school can either be a NW5 school, a large public school, or another type of school. 
+
+This cell confirms that there are no instances in which a person attends a school that is marked as multiple of the school types. 
+```{}
+df.loc[((df['is_nw5']==1) & (df['is_large_public']==1)) | ((df['is_nw5']==1) & (df['dest_other'] == 1)) | ((df['is_large_public']==1) & df['dest_other']==1) | (df['dest_other']==1)& (df['is_nw5']==1) & (df['is_large_public']==1)]
+```
+
+
+```{python}
+df.head()
+#df.names()
+```
+
+## Distribution of Variables
+
+This section will look at the distribution of variables faceted by NW5 school, large public school, or another type of school.
+
+
+```{python}
+g=sns.pairplot(df, diag_kind='kde')
+plt.show()
+```
+
+## Graphing
+
+
+#### Geography
+
+Within each student's application, we have access to information about where they lived when they applied to Willamette.
+
+```{r}
+# graph of where students are from by region
+place_df = df %>% mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        ),
+        n_region = case_when(
+            active_region %in% c('CA', 'WA', 'OR') ~ "West Coast",
+            active_region %in% c('AZ', 'NV', 'NM', 'TX' ) ~ 'Southwest',
+            active_region %in% c('ID', 'MT', 'UT', 'WY', 'CO') ~ 'Rocky Mtn',
+            active_region %in% c('ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN' ) ~ 'Midwest',
+            active_region %in% c('MA', 'VT', 'MA', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC') ~ 'Northeast',
+            active_region %in% c('AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL') ~ 'South',
+            active_region %in% c("AK", 'HI') ~ 'AK/HI',
+            (is.na(active_region) & active_country != 'United States' & !is.na(active_country)) | (active_country != 'United States' & !is.na(active_region)) ~ 'International') ) %>%
+            select('school_loc', 'n_region', 'active_region', 'active_country') %>% drop_na(n_region)
+  #print(place_df)
+```
+
+```{r}
+region_graph = ggplot(data=place_df, aes(x=fct_rev(fct_infreq(n_region)))) + 
+geom_bar() +
+coord_flip() +
+labs(
+  title="Region of Origin for Applicants",
+  y = 'Number of Applicants',
+  x = 'Applicant Region of Origin')+ 
+  geom_text(stat = "count", aes(label = after_stat(count)), hjust = -.23)
+
+print(region_graph)
+
+```
+
+Graph based on The Geomarkets
+
+```{r}
+# graph of where students are from by region
+place_df_2 = df %>% mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ),
+        n_region = case_when(
+            active_region %in% c('CA', 'WA') ~ "West Coast",
+            active_region %in% c('OR') ~ "OR",
+            active_region %in% c('AZ', 'NV', 'NM', 'TX' ) ~ 'Southwest',
+            active_region %in% c('ID', 'MT', 'UT', 'WY', 'CO') ~ 'Rocky Mtn',
+            active_region %in% c('ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN' ) ~ 'Midwest',
+            active_region %in% c('MA', 'VT', 'MA', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC') ~ 'Northeast',
+            active_region %in% c('AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL') ~ 'South',
+            active_region %in% c("AK", 'HI') ~ 'AK/HI',
+            (is.na(active_region) & active_country != 'United States' & !is.na(active_country)) | (active_country != 'United States' & !is.na(active_region)) ~ 'International') ) %>%
+            select('school_loc', 'n_region', 'active_region', 'active_country') %>% drop_na(n_region)
+  #print(place_df)
+```
+
+
+```{r}
+region_graph = ggplot(data=place_df_2, aes(x=fct_rev(fct_infreq(n_region)))) + 
+geom_bar() +
+coord_flip() +
+labs(
+  title="Region of Origin for Applicants",
+  y = 'Number of Applicants',
+  x = 'Applicant Region of Origin') + 
+  geom_text(stat = "count", aes(label = after_stat(count)), hjust = -.23)
+
+print(region_graph)
+
+```
+
+
+Geomarket percentages by where they went, including other
+
+```{r}
+# split by region including other by count
+place_df = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ),
+        n_region = case_when(
+            active_region %in% c('CA', 'WA', 'OR') ~ "West Coast",
+            active_region %in% c('AZ', 'NV', 'NM', 'TX' ) ~ 'Southwest',
+            active_region %in% c('ID', 'MT', 'UT', 'WY', 'CO') ~ 'Rocky Mtn',
+            active_region %in% c('ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN' ) ~ 'Midwest',
+            active_region %in% c('MA', 'VT', 'MA', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC') ~ 'Northeast',
+            active_region %in% c('AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL') ~ 'South',
+            active_region %in% c("AK", 'HI') ~ 'AK/HI',
+            (is.na(active_region) & active_country != 'United States' & !is.na(active_country)) | (active_country != 'United States' & !is.na(active_region)) ~ 'International')
+        )  %>% drop_na(n_region)
+ggplot(data=place_df, aes(x=n_region, fill=school_loc)) + geom_bar(stat="count", position="dodge") 
+
+```
+
+```{r}
+# graph of percentages of students split by geomarket attending each type of school
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ),
+        n_region = case_when(
+            active_region %in% c('CA', 'WA', 'OR') ~ "West Coast",
+            active_region %in% c('AZ', 'NV', 'NM', 'TX' ) ~ 'Southwest',
+            active_region %in% c('ID', 'MT', 'UT', 'WY', 'CO') ~ 'Rocky Mtn',
+            active_region %in% c('ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN' ) ~ 'Midwest',
+            active_region %in% c('MA', 'VT', 'MA', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC') ~ 'Northeast',
+            active_region %in% c('AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL') ~ 'South',
+            active_region %in% c("AK", 'HI') ~ 'AK/HI',
+            (is.na(active_region) & active_country != 'United States' & !is.na(active_country)) | (active_country != 'United States' & !is.na(active_region)) ~ 'International')
+        ) %>% drop_na(n_region, school_loc) %>% 
+    group_by(n_region, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1)
+```        
+
+
+```{r}
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=n_region, y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent)
+```
+
+This graph shows us that 
+
+```{r}
+# graph of percentages of students who go to either large public or nw5, not other. split by region
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ),
+        n_region = case_when(
+            active_region %in% c('CA', 'WA', 'OR') ~ "West Coast",
+            active_region %in% c('AZ', 'NV', 'NM', 'TX' ) ~ 'Southwest',
+            active_region %in% c('ID', 'MT', 'UT', 'WY', 'CO') ~ 'Rocky Mtn',
+            active_region %in% c('ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN' ) ~ 'Midwest',
+            active_region %in% c('MA', 'VT', 'MA', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC') ~ 'Northeast',
+            active_region %in% c('AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL') ~ 'South',
+            active_region %in% c("AK", 'HI') ~ 'AK/HI',
+            (is.na(active_region) & active_country != 'United States' & !is.na(active_country)) | (active_country != 'United States' & !is.na(active_region)) ~ 'International')
+        ) %>% drop_na(n_region, school_loc) %>% 
+    group_by(n_region, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+          #filtering out the "other schools"
+          filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=n_region, y=percent,fill=school_loc)) + geom_col(position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    labs (
+      x= "Applicant Region of Origin",
+      y = "Perentage of Students per Region",
+      fill = "Attended School Category"
+      )
+```
+
+From this graph, we can see that
+
+#### Financials
+
+The cost to attend college can be quite large, especially going to a NW5 school instead of a large public school. This has the potential to be a large factor in where students decide to attend. 
+It could also be interesting to look at if students are first generation and if they tend to go to a certain type of school, potentially one with less overall cost to them and their families. 
+
+
+Columns to look at:
+common_app_fee_waiver - could be null or zero even if they would receive financial aid, but they applied to schools that did not have an application fee
+need_based_aid - could be indicative of a person who would have to pay attention to total cost before they choose a school.
+
+
+```{r}
+df %>% filter('need_based_aid' != 0) %>% select('need_based_aid', 'talent_scholarships', 'efc_sai', 'common_app_fee_waiver')
+```
+Based on the columns that are null and active, we will look at the potential correlation between need based aid and destination, as well as common_app_fee_waiver and destination.
+
+```{r}
+
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        )) %>% 
+    drop_na(need_based_aid, school_loc) %>% 
+    group_by(need_based_aid, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE))
+          #filtering out the "other schools"
+          #filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=as.factor(need_based_aid), y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    scale_x_discrete(labels = c("0" = "Not Eligible", "1" = "Eligible")) +
+    labs (
+      x= "Eligibility of Need Based Aid",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+```{r}
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        )) %>% 
+    drop_na(need_based_aid, school_loc) %>% 
+    group_by(need_based_aid, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE)) %>%
+          #filtering out the "other schools"
+          filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=as.factor(need_based_aid), y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    scale_x_discrete(labels = c("0" = "Not Eligible", "1" = "Eligible")) +
+    labs (
+      x= "Eligibility of Need Based Aid",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+From this graph, we can see that based on the eligibility of need based aid, there is not really a relationship bewteen just the eligibility of need based aid and going to a large public school or a NW5 school. 
+
+#### Demographics
+
+
+This graph is mostly going to look at the first-generation status of students
+
+```{r}
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        )) %>% 
+    drop_na(first_gen_status, school_loc) %>% 
+    group_by(first_gen_status, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE)) %>%
+          #filtering out the "other schools"
+          filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=as.factor(first_gen_status), y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    scale_x_discrete(labels = c("0" = "Not First Generation", "1" = "First Generation")) +
+    labs (
+      x= "First Generation Status",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+```{r}
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        )) %>% 
+    drop_na(first_gen_status, school_loc) %>% 
+    group_by(first_gen_status, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE)) 
+          #filtering out the "other schools"
+          #filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=as.factor(first_gen_status), y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    scale_x_discrete(labels = c("0" = "Not First Generation", "1" = "First Generation")) +
+    labs (
+      x= "First Generation Status",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+Learned from first-gen graphs:
+
+
+Race/Ethnicity
+column: ipeds_classification
+
+```{r}
+unique(df['ipeds_classification'])
+```
+
+```{r}
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        )) %>% 
+    drop_na(ipeds_classification, school_loc) %>% 
+    group_by(ipeds_classification, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE)) 
+
+    print(df_loc)
+    
+    ggplot(data=df_loc,aes(x=ipeds_classification, y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    labs (
+      x= "Ethnicity of Student",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9)) +
+      theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+```{r}
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        )) %>% 
+    drop_na(ipeds_classification, school_loc) %>% 
+    group_by(ipeds_classification, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE)) %>%
+          #filtering out the "other schools"
+          filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=ipeds_classification, y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    labs (
+      x= "Ethnicity of Student",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9)) +
+      theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+#### Academics
+
+Mostly interested in GPA, test scores, academic rigor, writing rating. Do more academically successful students tend to go private or public?
+
+Academic columns:
+app_weighted_gpa
+app_unweighted_gpa
+app_transfer_gpa
+co_curricular_rating (1-6) 6 most demanding
+curriculum_rating (1-6) 6 most demanding
+writing_rating (1-4) 4 outstanding
+converted_satr_superscore
+person_calculated_merit_rank (num scale)
+edi_access_check 1/0 Indicates whether the applicant meets EDI access criteria
+
+
+```{r}
+#this graph will look at the combined GPA 
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ), 
+        combo_gpa = case_when(
+          !is.na(app_transfer_gpa) & is.na(app_unweighted_gpa) ~ app_transfer_gpa +1 ,
+          is.na(app_transfer_gpa) & !is.na(app_weighted_gpa) ~ app_weighted_gpa,
+          !is.na(app_weighted_gpa) & !is.na(app_transfer_gpa) ~ (((app_transfer_gpa+1)+ app_weighted_gpa) /2)
+        )) %>% 
+    mutate(combo_gpa = cut(combo_gpa, breaks = c(2,2.5,2.75,3,3.25,3.5,3.75,4, 4.25,4.5,4.75,5), right = FALSE)) %>%
+        #mutate(unweight_gpa = cut(unweight_gpa, breaks=8)) %>%
+    drop_na(combo_gpa, school_loc) %>% 
+    group_by(combo_gpa, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE))
+          #filtering out the "other schools"
+          #filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=combo_gpa, y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    #scale_x_discrete(labels = c("0" = "Not First Generation", "1" = "First Generation")) +
+    labs (
+      x= "Applicant Unweighted GPA",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+```{r}
+ggplot(data=df_loc,aes(x=combo_gpa, y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    #scale_x_discrete(labels = c("0" = "Not First Generation", "1" = "First Generation")) +
+    labs (
+      x= "Applicant Unweighted GPA",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+```{r}
+df_loc =df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ), 
+        unweight_gpa = case_when(
+          !is.na(app_unweighted_gpa) ~ app_unweighted_gpa,
+          is.na(app_unweighted_gpa) & !is.na(app_transfer_gpa) ~ app_transfer_gpa
+        )
+        ) %>% 
+        filter(unweight_gpa <= 4) %>%
+        mutate(unweight_gpa = cut(unweight_gpa, breaks = c(2,2.5,2.75,3,3.25,3.5,3.75,4), right = FALSE)) %>%
+        #mutate(unweight_gpa = cut(unweight_gpa, breaks=8)) %>%
+    drop_na(unweight_gpa, school_loc) %>% 
+    group_by(unweight_gpa, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE))
+          #filtering out the "other schools"
+          #filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=unweight_gpa, y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    #scale_x_discrete(labels = c("0" = "Not First Generation", "1" = "First Generation")) +
+    labs (
+      x= "Applicant Unweighted GPA",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+```{r}
+df_loc =df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ), 
+        unweight_gpa = case_when(
+          !is.na(app_unweighted_gpa) ~ app_unweighted_gpa,
+          is.na(app_unweighted_gpa) & !is.na(app_transfer_gpa) ~ app_transfer_gpa
+        )
+        ) %>% 
+        filter(unweight_gpa <= 4) %>%
+        mutate(unweight_gpa = cut(unweight_gpa, breaks = c(2,2.5,2.75,3,3.25,3.5,3.75,4), right = FALSE)) %>%
+        #mutate(unweight_gpa = cut(unweight_gpa, breaks=8)) %>%
+    drop_na(unweight_gpa, school_loc) %>% 
+    group_by(unweight_gpa, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+    mutate(school_loc = fct_reorder(school_loc, percent, .fun = identity, .desc=TRUE)) %>%
+          #filtering out the "other schools"
+          filter(school_loc != 'Other') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=unweight_gpa, y=percent,fill=school_loc)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    #scale_x_discrete(labels = c("0" = "Not First Generation", "1" = "First Generation")) +
+    labs (
+      x= "Applicant Unweighted GPA",
+      y = "Percentage of Students",
+      fill = "Attended School Category"
+      )+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+  
+
+```{r}
+max(df['app_transfer_gpa'], na.rm=TRUE)
+max(df['app_unweighted_gpa'], na.rm=TRUE)
+sum(df$app_unweighted_gpa >4, na.rm = TRUE)
+```
+
+
+```{}
+df4 = df[['app_unweighted_gpa', 'curriculum_rating', 'writing_rating', 'is_nw5', 'is_large_public', 'dest_other']]
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+# 1. Summarize to get counts, then calculate percentage
+plot_data = df %>%
+  count(writing_rating) %>%
+  mutate(pct = n / sum(n))
+
+df_percentage <- df %>%
+  group_by(writing_rating) %>%
+  summarise(pct_nw5 = mean(is_nw5 == 1))
+# 2. Create the plot
+plt = ggplot(df_percentage, aes(x = writing_rating, y = pct_nw5)) +
+  geom_col(fill = "red3") +
+  geom_text(aes(label = scales::percent(pct_nw5)), vjust = -0.5) + # Adds text labels
+  scale_y_continuous(labels = scales::percent) +                # Formats y-axis
+  labs(x = "Category", y = "Percent of Total")
+
+  print(plt)
+
+```
+
+
+```{r}
+df_percent <- df %>%
+  group_by(writing_rating,testing_plan) %>%
+  summarise(value = sum(is_nw5), total=n()) %>%
+  mutate(
+    total2 = sum(value),
+    percent = value / total
+  ) %>%
+  drop_na(testing_plan)
+
+ggplot(df_percent, aes(x = writing_rating, fill = factor(testing_plan), y=percent)) +
+  geom_col(position = position_dodge()) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+  labs(
+    title = "Percentage of Applicants attending Northwest 5 schools by testing plan and Writing Rating",
+    subtitle = "Split by Writing Rating and Testing Plan",
+    x = "Writing Rating",
+    y = "Percentage of students attending a Northwest 5 school",
+    fill = "Submitted Test Scores"
+  )+
+  scale_fill_manual(values=c("red3", "yellow"), labels=c("Submitted", "Did not submit") )
+```
+
+
+```{r}
+#just looking at testing plan
+#x axis will be where they went to school
+
+df_percent <- df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        )) %>%
+  # group_by(testing_plan) %>%
+  #summarise(value = sum(school_loc), total=n()) %>%
+  #mutate(
+  #  total2 = sum(value),df
+  #  Percentage = value / total) %>% 
+  drop_na(testing_plan) %>%
+  #count(testing_plan, school_loc) %>% 
+  group_by(testing_plan) %>%
+  summarize( value = sum(n), total=n()) %>%
+  mutate(Percentage =  value/total, total=total)
+  #(n / n()), nrow=nrow(.))
+
+ggplot(df_percent, aes(x = school_loc, y = Percentage, fill = school_loc)) +
+  geom_col() +
+  facet_wrap(~ testing_plan)
+
+```
+
+## New Data
+
+```{python}
+# Importing the data
+
+df = pd.read_csv("../../data/processed/capstone_data_processed_v2.csv")
+```
+
+```{r}
+library(tidyverse)
+dfv2 = read_csv("data/processed/capstone_data_xgboost_v2.csv")
+```
+
+### New Geomarkets
+
+Trying to get the graph that I want to use for the poster
+
+```{r}
+# graph of percentages of students split by geomarket attending each type of school
+df_loc = dfv2 %>% 
+        mutate(regions = case_when(
+            n_region %in% c('OR-01', 'OR-02') ~ 'Urban OR',
+            n_region %in% c('OR-06', 'OR-05', 'OR-04') ~ 'Rural OR',
+            n_region %in% c('OR-03') ~ 'Local OR',
+            n_region %in% c('WA-01', 'WA-03') ~ 'Urban WA',
+            n_region %in% c('WA-02', 'WA-04', 'WA-05', 'WA-06') ~ 'Other WA',
+            TRUE ~ n_region
+            )) %>%
+        drop_na(regions, destination) %>% filter(regions != 'Unknown') %>%
+    group_by(regions, destination) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1)
+```        
+
+```{r}
+    #print(df_loc)
+    ggplot(data=df_loc,aes(x=regions, y=percent,fill=destination)) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent)
+```
+
+This graph shows us that 
+
+
+Same graph as above, but only public/private (grouped, not filtered) - this graph should be used in the poster, potentially paper as well. 
+
+```{r}
+# graph of percentages of students split by geomarket attending each type of school
+df_loc = dfv2 %>% 
+        mutate(regions = case_when(
+            n_region %in% c('OR-01', 'OR-02') ~ 'Urban OR',
+            n_region %in% c('OR-06', 'OR-05', 'OR-04', 'OR-03') ~ 'Other OR',
+            n_region %in% c('WA-01', 'WA-03') ~ 'Urban WA',
+            n_region %in% c('WA-02', 'WA-04', 'WA-05', 'WA-06') ~ 'Other WA',
+            TRUE ~ n_region
+            ), school_loc = case_when(
+                  destination %in% c('Local Public', 'Three Large Public') ~ 'Public',
+                  destination %in% c('NW5', 'Local Private') ~ 'Private'
+            )) %>% mutate (regions = fct_relevel(regions, "Urban OR", "Other OR", "Urban WA", "Other WA", "CA", "Secondary", "Other States", "International/Other")) %>%
+        drop_na(regions, destination) %>% filter(regions != 'Unknown') %>% 
+    group_by(regions, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1)
+```    
+
+```{r}
+    ggplot(data=df_loc,aes(x=regions, y=percent,fill=factor(school_loc))) + geom_col( position="dodge") +
+    scale_y_continuous(labels = scales::percent) + labs(x="Student Region of Origin", y="Percentage of Applicants", subtitle = "Percentage of Applicants attending each school type by region of origin", title= "Public vs Private: College Enrollment by Region", fill= 'School Type') + theme_minimal()+ scale_fill_brewer(palette = "Pastel1")+ geom_text(aes(label = round(percent*100,2)), vjust = -.5, position = position_dodge(width=0.9))
+```
+
+
+
+
+```{r}
+# graph of percentages of students who go to either large public or nw5, not other. split by region
+df_loc = df %>%
+    mutate(school_loc = case_when(
+        is_nw5==1 ~ "NW 5",
+        is_local_public==1 ~ "Local Public",
+        is_local_private ==1 ~ "Local Private",
+        is_three_large_public ==1 ~ "OR Large Public",
+        dest_other==1 ~ "Other"
+        ),
+        n_region = case_when(
+            active_region %in% c('CA', 'WA', 'OR') ~ "West Coast",
+            active_region %in% c('AZ', 'NV', 'NM', 'TX' ) ~ 'Southwest',
+            active_region %in% c('ID', 'MT', 'UT', 'WY', 'CO') ~ 'Rocky Mtn',
+            active_region %in% c('ND', 'SD', 'NE', 'KS', 'OK', 'MN', 'IA', 'MO', 'IL', 'OH', 'MI', 'WI', 'IN' ) ~ 'Midwest',
+            active_region %in% c('MA', 'VT', 'MA', 'NH', 'NY', 'RI', 'NJ', 'CT', 'DE', 'MD', 'PA', 'DC') ~ 'Northeast',
+            active_region %in% c('AR', 'AL', 'LA', 'MS', 'GA', 'SC', 'NC', 'VA', 'WV', 'KY', 'TN', 'FL') ~ 'South',
+            active_region %in% c("AK", 'HI') ~ 'AK/HI',
+            (is.na(active_region) & active_country != 'United States' & !is.na(active_country)) | (active_country != 'United States' & !is.na(active_region)) ~ 'International')
+        ) %>% drop_na(n_region, school_loc) %>% 
+    group_by(n_region, school_loc) %>% 
+    summarise(subtotal = n(), .groups = "drop_last") %>% 
+    mutate(total_by_var1 = sum(subtotal),
+          percent = subtotal/total_by_var1) %>%
+          #filtering out the "other schools"
+          filter(school_loc == 'Large Public' | school_loc == 'NW 5') 
+    print(df_loc)
+    ggplot(data=df_loc,aes(x=n_region, y=percent,fill=school_loc)) + geom_col(position="dodge") +
+    scale_y_continuous(labels = scales::percent) +
+    labs (
+      x= "Applicant Region of Origin",
+      y = "Perentage of Students per Region",
+      fill = "Attended School Category"
+      )
+```

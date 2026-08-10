@@ -1,0 +1,77 @@
+---
+title: "Utilizing Multinomial Logistic Regression for Version 2"
+date: last-modified
+author: "Courtney St. Onge & Seira Ramchandani"
+format: html
+jupyter: python3
+---
+
+
+```{python}
+# import necessary libraries
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
+```
+
+```{python}
+# importing modeling dataset
+df = pd.read_csv("../../data/processed/capstone_data_modeling_v2.csv")
+
+print(df.shape)
+print(df.columns)
+```
+
+```{python}
+# Creating X and y for modeling
+X = df.drop(columns=['destination'])
+y = df['destination']
+```
+
+```{python}
+# Splitting data into training and testing sets (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+```
+
+```{python}
+#Standardizing the features using StandardScaler
+# adjusts numbers in a dataset so they all share a mean of 0 and a standard deviation of 1.
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+```
+
+```{python}
+# Creating and fitting the multinomial logistic regression model
+mlr_model = LogisticRegression(multi_class='multinomial', solver='lbfgs', max_iter=1000,class_weight='balanced')
+mlr_model.fit(X_train_scaled, y_train)
+mlr_preds = mlr_model.predict(X_test_scaled)
+```
+
+
+```{python}
+#print accuracy score and classification report
+print("Accuracy Score:", accuracy_score(y_test, mlr_preds))
+
+print("\nClassification Report:\n", classification_report(y_test, mlr_preds))
+```
+
+## With class weighting (class_weight = 'balanced')
+Accuracy Score: 0.43
+
+Class by class:
+
+NW5: 0.31 precision, 0.42 recall.
+
+Local Private: 0.50 precision, 0.25 recall. 
+
+Local Public: 0.42 precision, 0.58 recall. 
+
+Three Large Public. 0.50 precision, 0.56 recall.
+
+Additional:
+Macro avg F1: 0.43
+Weighted avg F1: 0.42

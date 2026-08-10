@@ -1,0 +1,324 @@
+# Clustering
+This notebook is designed to test whether clustering will show if destination categories reflect real structure in the data. 
+
+Clustering is an unsupervised machine learning algorithm that sorts items into groups so that things in the same group are more like each other than things in other groups. It is a way to find natural patterns without a pre-made guide. In this case, we will use it to cluster features into groups and see if that aligns with the enrollment destination groups.
+
+```{python}
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+df = pd.read_csv("../../data/processed/capstone_data_modeling.csv")
+```
+
+Checking for outliers in continuous variables to decide what to do with those columns in clustering.
+
+```{python}
+import matplotlib.pyplot as plt
+
+def check_distribution(df, col, n_extreme=10):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+
+    axes[0].hist(df[col].dropna(), bins=50)
+    axes[0].set_title(f"Histogram: {col}")
+    axes[0].set_xlabel(col)
+
+    axes[1].boxplot(df[col].dropna(), vert=False)
+    axes[1].set_title(f"Boxplot: {col}")
+
+    plt.tight_layout()
+    plt.show()
+
+    print(df[col].describe())
+
+    print(f"\nTop {n_extreme} highest values:")
+    print(df.nlargest(n_extreme, col)[[col]])
+
+    print(f"\nTop {n_extreme} lowest values:")
+    print(df.nsmallest(n_extreme, col)[[col]])
+```
+
+```{python}
+check_distribution(cluster_df, "efc_sai")
+```
+
+```{python}
+check_distribution(cluster_df, "days_prospect_to_app")
+```
+
+```{python}
+check_distribution(cluster_df, "days_visit_to_submit_travel")
+```
+
+
+```{python}
+#separating out target variable
+target = df['destination']
+cluster_df = df.drop(columns=['destination'])
+
+# drop all heavily-imputed visit-timing columns from the clustering feature set, since this is affecting the groupings. Since we have the have_visited_visittype columns as binary flags, that will be used instead
+visit_timing_cols = [c for c in cluster_df.columns if c.startswith("days_visit_to_submit")]
+cluster_df = cluster_df.drop(columns=visit_timing_cols)
+
+# log-transform efc_sai to compress the right tail
+# log1p handles 0 values safely (log(0) is undefined, log1p(0) = 0)
+# keeps the positive negative sign since that shows financial need
+cluster_df["efc_sai"] = np.sign(cluster_df["efc_sai"]) * np.log1p(np.abs(cluster_df["efc_sai"]))
+
+# winsorize days_prospect_to_app at the 99th percentile since there are some large outliers from people who are in the database from ~12 years old
+cap_value = cluster_df["days_prospect_to_app"].quantile(0.99)
+print(f"Capping days_prospect_to_app at: {cap_value:.1f} days")
+
+n_capped = (cluster_df["days_prospect_to_app"] > cap_value).sum()
+print(f"Rows affected: {n_capped}")
+
+cluster_df["days_prospect_to_app"] = cluster_df["days_prospect_to_app"].clip(upper=cap_value)
+```
+
+
+```{python}
+#identifying binary columns vs continuous columns
+
+binary_cols = [c for c in cluster_df.columns
+               if set(cluster_df[c].unique()).issubset({0, 1})]
+continuous_cols = [c for c in cluster_df.columns if c not in binary_cols]
+
+print(f"Binary/dummy columns ({len(binary_cols)}): {binary_cols}")
+print(f"\nContinuous columns ({len(continuous_cols)}): {continuous_cols}")
+
+# should be 37 binary columns and 10 continuous columns
+```
+
+```{python}
+# scaling continuous columns
+
+scaler = StandardScaler()
+cluster_df_scaled = cluster_df.copy()
+cluster_df_scaled[continuous_cols] = scaler.fit_transform(cluster_df[continuous_cols])
+```
+
+Since we are working with mixed data/features (continuous and binary), standard algorithms like K-mean won't work. Trying K-Prototypes, which combines K-means (for continuous features using means) and K-modes (for binary/categorical features using frequencies/modes) into a single iterative update step.
+
+```{python}
+from kmodes.kprototypes import KPrototypes
+import numpy as np
+import matplotlib.pyplot as plt
+
+# k-prototypes needs categorical columns as index positions, not names
+categorical_indices = [cluster_df_scaled.columns.get_loc(c) for c in binary_cols]
+
+print(f"Number of categorical (binary/dummy) columns: {len(categorical_indices)}")
+print(f"Number of continuous columns: {len(continuous_cols)}")
+```
+
+```{python}
+# k-prototypes works on a numpy array, not a dataframe, and categorical
+# columns need to be cast to string so it doesn't try to treat 0/1 as numeric
+X = cluster_df_scaled.copy()
+X[binary_cols] = X[binary_cols].astype(str)
+X_matrix = X.values
+```
+
+```{python}
+# elbow plot: run k-prototypes across a range of k and track cost
+costs = []
+k_range = range(2, 9)
+
+for k in k_range:
+    kproto = KPrototypes(n_clusters=k, init="Cao", random_state=42, n_jobs=-1)
+    kproto.fit_predict(X_matrix, categorical=categorical_indices)
+    costs.append(kproto.cost_)
+    print(f"k={k}: cost={kproto.cost_:.1f}")
+
+plt.figure(figsize=(8, 5))
+plt.plot(list(k_range), costs, marker="o")
+plt.xlabel("Number of clusters (k)")
+plt.ylabel("Cost")
+plt.title("K-Prototypes Elbow Plot")
+plt.show()
+```
+
+Smooth, gradual decline with no sharp point. 
+Decision to fit k=5 to compare directly with the 5 destination categories.
+
+```{python}
+# Candidate k value = 5
+candidate_ks = [5]
+fitted_models = {}
+
+for k in candidate_ks:
+    kproto = KPrototypes(n_clusters=k, init="Cao", random_state=42, n_jobs=-1)
+    clusters = kproto.fit_predict(X_matrix, categorical=categorical_indices)
+    fitted_models[k] = {"model": kproto, "labels": clusters}
+    print(f"k={k} fitted — cluster sizes: {np.bincount(clusters)}")
+```
+
+```{python}
+# attach cluster labels back to the original (unscaled) data for profiling
+# use unscaled cluster_df so means/proportions are in interpretable units
+profiling_df = cluster_df.copy()
+profiling_df["destination"] = df["destination"]  # bring target back in for later
+
+for k in candidate_ks:
+    profiling_df[f"cluster_k{k}"] = fitted_models[k]["labels"]
+```
+
+## Results
+
+```{python}
+# profile k=5, since it maps directly onto your destination categories
+k = 5
+group = profiling_df.groupby(f"cluster_k{k}")
+
+print("Continuous feature means per cluster:")
+print(group[continuous_cols].mean().round(2))
+
+print("\nBinary/dummy feature proportions per cluster:")
+print(group[binary_cols].mean().round(2))
+
+print("\nCluster sizes:")
+print(profiling_df[f"cluster_k{k}"].value_counts().sort_index())
+```
+
+The cluster sizes are pretty evenly distributed (500 ~ 1700). The strongest opposites are Group 3 and Group 0/2.
+There are some interesting trends here.
+
+Group 3 shows highest academic profile across the board ( gpa, curriculum, writing, etc.). This also ties into highest calculated merit rank, and a larger proportion for testing opt in. The average days to submit their application is the longest.
+
+Group 0 and 2 show lowest ratings on academic profile, lower merit ranks, and faster decision making. Thier financial need is comparable to Group 3.
+
+The group that shows a stronger change in financial profile is Group 1. This group ranks in between the others for academic profile and merit rank, but shows lower efc_sai and higher percentages for common app fee waiver, need based aid, ande fafsa submission. This grouping has a high first gen status.
+
+### Given you're in this cluster, what destination did you end up at?
+```{python}
+crosstab_pct = pd.crosstab(profiling_df["cluster_k5"], profiling_df["destination"], normalize="index")
+print("\nRow percentages (destination mix within each cluster):")
+print((crosstab_pct * 100).round(1))
+```
+
+The first cross tab shows for each cluster, how it splits across destinations. For example, you see that for cluster 0, 11.5% of that cluster is held in local large public student features. 
+
+### Given you ended up at this destination, which cluster's feature profile did you have?
+```{python}
+# for each destination, how is it split across clusters
+crosstab_pct_col = pd.crosstab(profiling_df["cluster_k5"], profiling_df["destination"], normalize="columns")
+print("Column percentages (cluster mix within each destination):")
+print((crosstab_pct_col * 100).round(1))
+```
+
+The second cross tab shows for each destination, how it splits across clusters. For example, you see that for Local Large Public students, 20.5% of their applicants' features belong in cluster 0. 
+
+There's a pretty even split across all clusters and destinations, with some expections worth noting.
+- In crosstab 1, Cluster 3 holds highest "Other" and lowest "Three Large Public". High academic profiles and slower decision making was Group 3's strong characteristics, and the largest segment of those went to "Other" schools.
+
+- In crosstab 1, Cluster 1 holds highest "Three Large Public" and lowest "Other". The largest segment of those with higher financial need characterestics went to the three large public schools.
+
+This doesn't mean the opposite is true. In reverse:
+- In crosstab 2, "Other" students still show largest membership in Cluster 3, but "Three Large Public" students show lowest membership in Cluster 1. Since the population for the 3 large public schools is big, only 13% of their student population fit in Cluster 1 characteristics.
+- NW5 students show largest membership in Cluster 3, which may mean that high academic profiles are seen in many students who enroll.
+
+a
+The clusters represent coherent combinations of traits (academic strength, financial need, timeline behavior), but those combinations aren't strongly predictive of where students end up, at least not at k=5 with this feature set.
+
+## Running a Chi-Square Test on the clustering and destination 
+
+Null hypothesis: There IS NO statistically significant difference between the cluster membership and destination group
+
+Alternative Hypothesis: There IS a statistically significant difference between the cluster membership and destination group
+```{python}
+from scipy.stats import chi2_contingency
+
+def chi_square_test(df, feature_col, target_col="destination"):
+    table = pd.crosstab(df[feature_col], df[target_col])
+    print(f"Contingency table: {feature_col} x {target_col}")
+    print(table)
+    print()
+
+    chi2, p, dof, expected = chi2_contingency(table)
+
+    # Cramer's V effect size
+    n = table.values.sum()
+    min_dim = min(table.shape) - 1
+    cramers_v = np.sqrt(chi2 / (n * min_dim)) if min_dim > 0 else np.nan
+
+    # flag if any expected cell counts are too low for the test to be reliable
+    low_expected = (expected < 5).sum()
+    total_cells = expected.size
+
+    print(f"Chi-square statistic : {chi2:.3f}")
+    print(f"Degrees of freedom   : {dof}")
+    print(f"p-value              : {p:.4f}")
+    print(f"Cramer's V           : {cramers_v:.3f}")
+
+
+    return {"feature": feature_col, "chi2": chi2, "dof": dof,
+            "p_value": p, "cramers_v": cramers_v}
+
+chi_square_test(profiling_df, "cluster_k5", "destination")
+```
+
+The p-value is less than 0.05, so we reject the null hypothesis. There is a statistically significant difference between cluster membership and enrollment group. 
+
+But, Cramer’s V tells us the strength of association between two categorical variables, giving a score from 0 to 1. An extremely small value means that even though the pattern isn't random, the actual connection or overlap between the categories is weak to the point of having little to no real-world impact 
+
+While destination distributions differ modestly across clusters (see cross-tabs), the overall association is weak (Cramér's V = 0.067), indicating cluster membership is not a strong standalone predictor of enrollment destination.
+
+## Visualizing the clusters
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# row percentages: destination mix within each cluster
+plot_data = pd.crosstab(profiling_df["cluster_k5"], profiling_df["destination"], normalize="index") * 100
+
+dest_colors = {
+    "NW5": "#fbb4ae",
+    "Three Large Public": "#b3cde3",
+    "Local Large Public": "#ccebc5",
+    "Local Private": "#decbe4",
+    "Other": "#fed9a6"
+}
+
+# order columns to match your dest_colors dict so legend order is consistent
+plot_data = pd.crosstab(profiling_df["cluster_k5"], profiling_df["destination"], normalize="index") * 100
+plot_data = plot_data[[c for c in dest_colors if c in plot_data.columns]]
+colors_ordered = [dest_colors[c] for c in plot_data.columns]
+
+
+# grouped (side-by-side) version since it's easier to compare a single destination across clusters
+fig, ax = plt.subplots(figsize=(10, 6))
+plot_data.plot(kind="bar", stacked=False, ax=ax, color=colors_ordered)
+ax.set_xlabel("Cluster", fontsize=14)
+ax.set_ylabel("Percent of Cluster", fontsize=14)
+ax.set_title("Destination Mix by Applicant Cluster", fontsize=18)
+ax.legend(title="Destination", bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=11)
+ax.tick_params(axis="both", labelsize=12)
+plt.tight_layout()
+#plt.savefig("cluster_destination_mix_grouped.png", dpi=300, bbox_inches="tight")
+plt.show()
+```
+
+
+```{python}
+from matplotlib.colors import LinearSegmentedColormap
+
+uw_cmap = LinearSegmentedColormap.from_list("uw_purple", ["#F5F0FA", "#4B2E83"])
+
+features_to_profile = ["app_weighted_gpa", "efc_sai", "days_prospect_to_app",
+                        "rec_value", "curriculum_rating"]
+
+profile_means = profiling_df.groupby("cluster_k5")[features_to_profile].mean()
+profile_z = (profile_means - profile_means.mean()) / profile_means.std()
+
+fig, ax = plt.subplots(figsize=(8, 6))
+sns.heatmap(
+    profile_z.T, annot=True, fmt=".2f", cmap=uw_cmap,
+    cbar_kws={"label": "Z-score"}, ax=ax
+)
+ax.set_xlabel("Cluster", fontsize=14)
+ax.set_ylabel(None)
+ax.set_title("Cluster Profiles (Standardized)", fontsize=18)
+plt.tight_layout()
+#plt.savefig("cluster_profile_heatmap.png", dpi=300, bbox_inches="tight")
+plt.show()
+```

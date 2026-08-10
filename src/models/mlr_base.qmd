@@ -1,0 +1,101 @@
+---
+title: "Utilizing Multinomial Logistic Regression"
+date: last-modified
+author: "Courtney St. Onge & Seira Ramchandani"
+format: html
+jupyter: python3
+---
+
+
+```{python}
+# import necessary libraries
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
+```
+
+```{python}
+# importing modeling dataset
+df = pd.read_csv("../../data/processed/capstone_data_modeling.csv")
+
+print(df.shape)
+print(df.columns)
+```
+
+```{python}
+# Creating X and y for modeling
+X = df.drop(columns=['destination'])
+y = df['destination']
+```
+
+```{python}
+# Splitting data into training and testing sets (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+```
+
+```{python}
+#Standardizing the features using StandardScaler
+# adjusts numbers in a dataset so they all share a mean of 0 and a standard deviation of 1.
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+```
+
+```{python}
+# Creating and fitting the multinomial logistic regression model
+mlr_model = LogisticRegression(multi_class='multinomial', solver='lbfgs', max_iter=1000,class_weight='balanced')
+mlr_model.fit(X_train_scaled, y_train)
+mlr_preds = mlr_model.predict(X_test_scaled)
+```
+
+
+```{python}
+#print accuray score and classification report
+print("Accuracy Score:", accuracy_score(y_test, mlr_preds))
+
+print("\nClassification Report:\n", classification_report(y_test, mlr_preds))
+```
+
+## With default metrics, no class weighting
+Accuracy Score: 0.53
+
+BUT
+
+Comparing Class by class, the accuracy is wildly uneven. 
+NW5: 0.00 precision, 0.00 recall...
+
+Local Private: 0.30 precision, 0.14 recall. So it's missing 86% of actual local private school students, and even when it does predict local private, it's only right 30% of the time.
+
+Local Large Public: 0.50 precision, 0.56 recall. In the middle.
+
+Three Large Public. 0.44 precision, 0.53 recall. Also in the middle.
+
+Other: 0.60 precision, 0.78 recall. This is the best performing class, but still not great. 
+
+Additional:
+Macro avg F1: 0.38
+Weighted avg F1: 0.48
+
+--> Class weighting will be very important to improve the model's performance, especially for the underrepresented classes, specifically NW5. We can apply class weights to give more importance to the minority classes during training.
+
+## With class weighting (class_weight = 'balanced')
+Accuracy Score: 0.45 
+
+Class by class:
+
+NW5: 0.16 precision, 0.40 recall.
+
+Local Private: 0.35 precision, 0.19 recall. 
+
+Local Large Public: 0.39 precision, 0.77 recall. 
+
+Three Large Public. 0.41 precision, 0.57 recall.
+
+Other: 0.72 precision, 0.45 recall.
+
+Additional:
+Macro avg F1: 0.40
+Weighted avg F1: 0.45

@@ -1,0 +1,41 @@
+---
+title: "Data Quality and Profiling"
+author: "Seira Ramchandani"
+date: "2026-06-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/Users/seira/Desktop/Classes/Capstone/Data Files/cleaned flat files")
+```
+
+```{r}
+# reading in the dataset
+ds = read.csv("capstone_data.csv")
+library(tidyverse)
+```
+
+```{r}
+# overview of the data
+dim(ds)
+
+summary(ds)
+```
+
+```{r}
+# duplication check
+anyDuplicated(ds)
+```
+```{r}
+# missingness check
+missing_summary <- ds %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), 
+               names_to = "column", 
+               values_to = "missing_count") %>%
+  mutate(missing_pct = round(missing_count / nrow(ds) * 100, 2)) %>%
+  arrange(desc(missing_pct))
+
+print(missing_summary, n = 65)
+```
+
