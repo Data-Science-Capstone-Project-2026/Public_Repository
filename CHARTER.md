@@ -6,7 +6,7 @@
 **Owner Product Lead:** Seira Ramchandani	
 **Peer Stakeholder POs:** Mike Kimmell and Dylan Ray
 **Instructor / Sponsor:** Lucas Cordova (`LucasCordova` on GitHub)
-**GitHub repo:**  [`Capstone2026`](https://github.com/Data-Science-Capstone-Project-2026/Public_Reposistory) 
+**GitHub repo:**  [`Capstone2026`](https://github.com/Data-Science-Capstone-Project-2026/Public_Repository) 
 **Discord category:** Project 10
 **Studio Session:** 3
 **Studio formed:** 5/25/2026
