@@ -1,4 +1,4 @@
-# Studio Charter: <project name>
+# Studio Charter: Willamette Applicant Trajectory
 
 > Filled in live during the **Studio Charter** session in week 3. Every section below is committed in the same commit at the end of that class block. See [Studio Charter (single-session inception)](https://courses.lpcordova.phd/data510/project-framework/charter-inception.html) for the script and time-boxes.
 
